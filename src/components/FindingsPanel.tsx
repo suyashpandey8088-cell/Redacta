@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Check } from 'lucide-react';
-import { CATEGORIES, CATEGORY_META, maskedPreview, type Category, type DetectionResult } from '../lib/pii';
+import { CATEGORIES, CATEGORY_META, createLineIndex, maskedPreview, type Category, type DetectionResult } from '../lib/pii';
 import { Swatch } from './ui';
 
 interface FindingsPanelProps {
@@ -20,8 +20,8 @@ export default function FindingsPanel({
   selectedId,
   onSelectEntity,
 }: FindingsPanelProps) {
-  const entities = result?.entities ?? [];
-  const rejected = result?.rejected ?? [];
+  const entities = useMemo(() => result?.entities ?? [], [result]);
+  const rejected = useMemo(() => result?.rejected ?? [], [result]);
   const total = entities.length;
 
   const counts = useMemo(
@@ -29,14 +29,10 @@ export default function FindingsPanel({
     [entities],
   );
 
-  const rejectedRows = useMemo(
-    () =>
-      rejected.map((r) => ({
-        ...r,
-        line: docText.slice(0, r.start).split('\n').length,
-      })),
-    [rejected, docText],
-  );
+  const rejectedRows = useMemo(() => {
+    const locate = createLineIndex(docText);
+    return rejected.map((r) => ({ ...r, line: locate(r.start).line }));
+  }, [rejected, docText]);
 
   return (
     <div className="flex flex-col">

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowRight, ChevronLeft, ChevronRight, X } from 'lucide-react';
-import { CATEGORY_META, aliasFor, replacementFor, type Entity, type RedactionMode } from '../lib/pii';
-import { MODE_LABEL, Swatch } from './ui';
+import { CATEGORY_META, MODE_LABEL, aliasFor, replacementFor, type Entity, type RedactionMode } from '../lib/pii';
+import { Swatch } from './ui';
 
 interface EditorProps {
   text: string;

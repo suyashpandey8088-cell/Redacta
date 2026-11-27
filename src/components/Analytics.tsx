@@ -3,12 +3,13 @@ import { motion } from 'framer-motion';
 import {
   CATEGORIES,
   CATEGORY_META,
+  MODE_LABEL,
   sanitizeText,
   type DetectionResult,
   type Entity,
   type RedactionMode,
 } from '../lib/pii';
-import { EmptyState, MODE_LABEL, Swatch, ViewHeader } from './ui';
+import { EmptyState, Swatch, ViewHeader } from './ui';
 
 interface AnalyticsProps {
   result: DetectionResult | null;

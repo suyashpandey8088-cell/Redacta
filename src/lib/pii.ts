@@ -10,6 +10,12 @@ export type RedactionMode = 'FULL' | 'PARTIAL' | 'PSEUDONYM';
 
 export const CATEGORIES: Category[] = ['EMAIL', 'PHONE', 'IP', 'PAN', 'AADHAAR', 'CARD'];
 
+export const MODE_LABEL: Record<RedactionMode, string> = {
+  FULL: 'Full mask',
+  PARTIAL: 'Partial mask',
+  PSEUDONYM: 'Pseudonymize',
+};
+
 export const CATEGORY_META: Record<
   Category,
   { label: string; prefix: string; color: string; softBg: string; underline: string }
@@ -127,11 +133,85 @@ function validateIPv6(value: string): boolean {
   return groups.every((g) => /^[0-9a-f]{1,4}$/.test(g));
 }
 
-function lineColumn(text: string, offset: number): { line: number; column: number } {
-  const before = text.slice(0, offset);
-  const line = before.split('\n').length;
-  const column = offset - before.lastIndexOf('\n');
-  return { line, column };
+/**
+ * Maps character offsets to 1-based line/column numbers. The text is walked
+ * once; each lookup is a binary search, so locating k findings costs
+ * O(n + k log n) instead of re-scanning the text for every finding.
+ */
+export function createLineIndex(text: string): (offset: number) => { line: number; column: number } {
+  const starts = [0];
+  for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
+  return (offset) => {
+    let lo = 0;
+    let hi = starts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (starts[mid] <= offset) lo = mid;
+      else hi = mid - 1;
+    }
+    return { line: lo + 1, column: offset - starts[lo] + 1 };
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Email scanning                                                      */
+/* ------------------------------------------------------------------ */
+
+const isWordChar = (c: number) =>
+  (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95; /* [A-Za-z0-9_] */
+const isLetter = (c: number) => (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+/** [A-Za-z0-9._%+-] — characters allowed in the local part. */
+const isLocalChar = (c: number) => isWordChar(c) || c === 46 || c === 37 || c === 43 || c === 45;
+/** [A-Za-z0-9.-] — characters allowed in the domain. */
+const isDomainChar = (c: number) => (c !== 95 && isWordChar(c)) || c === 46 || c === 45;
+
+/**
+ * Finds email-shaped spans. Produces exactly the matches of
+ *   /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g
+ * but anchors on each "@" and scans outwards, so it runs in linear time.
+ * The regex form backtracks quadratically on long dotted or dashed tokens
+ * (a 200 KB minified line could freeze the tab for tens of seconds).
+ */
+export function findEmailSpans(text: string): { start: number; end: number }[] {
+  const spans: { start: number; end: number }[] = [];
+  const len = text.length;
+  const code = (i: number) => (i >= 0 && i < len ? text.charCodeAt(i) : -1);
+  const boundaryAt = (i: number) => isWordChar(code(i - 1)) !== isWordChar(code(i));
+  let lastEnd = 0;
+
+  for (let at = text.indexOf('@'); at !== -1; at = text.indexOf('@', at + 1)) {
+    if (at < lastEnd) continue;
+
+    /* Local part: leftmost word boundary inside the run of local characters before "@". */
+    let runStart = at;
+    while (runStart > lastEnd && isLocalChar(code(runStart - 1))) runStart--;
+    let start = -1;
+    for (let s = runStart; s < at; s++) {
+      if (boundaryAt(s)) {
+        start = s;
+        break;
+      }
+    }
+    if (start === -1) continue;
+
+    /* Domain: rightmost "." followed by 2+ letters that end on a word boundary. */
+    let runEnd = at + 1;
+    while (isDomainChar(code(runEnd))) runEnd++;
+    let end = -1;
+    for (let dot = text.lastIndexOf('.', runEnd - 1); dot >= at + 2; dot = text.lastIndexOf('.', dot - 1)) {
+      let j = dot + 1;
+      while (j < runEnd && isLetter(code(j))) j++;
+      if (j - dot - 1 >= 2 && !isWordChar(code(j))) {
+        end = j;
+        break;
+      }
+    }
+    if (end === -1) continue;
+
+    spans.push({ start, end });
+    lastEnd = end;
+  }
+  return spans;
 }
 
 /* ------------------------------------------------------------------ */
@@ -175,11 +255,18 @@ export function detectPII(text: string, enabled: Category[]): DetectionResult {
   };
 
   if (enabledSet.has('EMAIL')) {
-    const re = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(text)) !== null) {
-      const ok = validateEmail(m[0]);
-      push('EMAIL', m, ok, m[0].toLowerCase(), ok ? undefined : 'Malformed email address');
+    for (const { start, end } of findEmailSpans(text)) {
+      const value = text.slice(start, end);
+      const ok = validateEmail(value);
+      candidates.push({
+        category: 'EMAIL',
+        start,
+        end,
+        value,
+        normalized: value.toLowerCase(),
+        validated: ok,
+        reason: ok ? undefined : 'Malformed email address',
+      });
     }
   }
 
@@ -322,15 +409,19 @@ export function detectPII(text: string, enabled: Category[]): DetectionResult {
       return PRIORITY[a.category] - PRIORITY[b.category];
     });
 
+  /* `valid` is sorted by start, so a candidate overlaps a kept one only if it starts before the furthest kept end. */
   const kept: Candidate[] = [];
+  let keptEnd = -1;
   for (const c of valid) {
-    const overlaps = kept.some((k) => c.start < k.end && c.end > k.start);
-    if (!overlaps) kept.push(c);
+    if (c.start >= keptEnd) {
+      kept.push(c);
+      keptEnd = c.end;
+    }
   }
-  kept.sort((a, b) => a.start - b.start);
 
+  const locate = createLineIndex(text);
   const entities: Entity[] = kept.map((c, i) => {
-    const { line, column } = lineColumn(text, c.start);
+    const { line, column } = locate(c.start);
     return {
       id: `ent-${i + 1}`,
       category: c.category,

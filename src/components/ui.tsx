@@ -120,9 +120,3 @@ export function Segmented<T extends string>({
     </div>
   );
 }
-
-export const MODE_LABEL = {
-  FULL: 'Full mask',
-  PARTIAL: 'Partial mask',
-  PSEUDONYM: 'Pseudonymize',
-} as const;

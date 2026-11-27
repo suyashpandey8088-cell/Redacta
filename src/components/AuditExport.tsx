@@ -1,7 +1,8 @@
 import { useMemo, useRef } from 'react';
 import { Copy, Download, FileText, Loader2, ScanLine } from 'lucide-react';
-import { CATEGORIES, CATEGORY_META, type Category, type DetectionResult, type Entity, type RedactionMode, type Segment } from '../lib/pii';
-import { MODE_LABEL, Swatch } from './ui';
+import { CATEGORIES, CATEGORY_META, MODE_LABEL, type Category, type DetectionResult, type Entity, type RedactionMode, type Segment } from '../lib/pii';
+import { exportFileName } from '../lib/files';
+import { Swatch } from './ui';
 
 interface AuditExportProps {
   docText: string;
@@ -28,11 +29,6 @@ const PAD = 16;
 /* Diff colours: removed text (original) and inserted text (sanitized). */
 const REMOVED = { line: 'rgba(217,56,30,0.07)', span: 'rgba(217,56,30,0.2)', mark: '#C2361C' };
 const ADDED = { line: 'rgba(31,122,77,0.08)', span: 'rgba(31,122,77,0.2)', mark: '#1F7A4D' };
-
-function exportName(fileName: string, kind: 'txt' | 'csv') {
-  const stem = fileName.replace(/\.[^.]+$/, '').trim() || 'document';
-  return `${stem}-sanitized.${kind}`;
-}
 
 /** Full-width tint behind every changed line, drawn under the text. */
 function LineBands({ lines, color }: { lines: number[]; color: string }) {
@@ -141,7 +137,7 @@ export default function AuditExport({
   const sanitizedLength = useMemo(() => segments.reduce((n, s) => n + s.text.length, 0), [segments]);
 
   const isLive = !!result && docText.length <= liveLimit;
-  const outName = exportName(fileName, fileKind);
+  const outName = exportFileName(fileName, fileKind);
 
   const original = useMemo(() => {
     if (entities.length === 0) return docText;
