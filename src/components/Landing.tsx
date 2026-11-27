@@ -26,7 +26,9 @@ import {
 } from '../lib/pii';
 import { HERO_RECORD, MODES_SNIPPET } from '../lib/sample';
 import { Logo, Swatch } from './ui';
-import { INTRO_TEXT_DELAY, IntroCurtain, Scramble, SectionWipeProvider, SplitReveal, useSectionWipe } from './fx';
+import { INTRO_TEXT_DELAY, IntroCurtain, Scramble, SectionWipeProvider, SplitReveal } from './fx';
+import { useSectionWipe } from './sectionWipe';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 import { scrollToTarget, startSmoothScroll } from '../lib/smoothScroll';
 
 interface LandingProps {
@@ -290,10 +292,7 @@ function PeekLens({ enabled, reveal, children }: { enabled: boolean; reveal: Rea
   const clip = useMotionTemplate`circle(${radius}px at ${x}px ${y}px)`;
   const ringScale = useTransform(radius, (v) => v / LENS);
   const tagOpacity = useTransform(radius, [LENS * 0.6, LENS], [0, 1]);
-  const [fine, setFine] = useState(false);
-  useEffect(() => {
-    setFine(window.matchMedia('(hover: hover) and (pointer: fine)').matches);
-  }, []);
+  const fine = useMediaQuery('(hover: hover) and (pointer: fine)');
   const active = fine && enabled;
   useEffect(() => {
     if (!active) radius.set(0);
@@ -339,6 +338,8 @@ function PeekLens({ enabled, reveal, children }: { enabled: boolean; reveal: Rea
   );
 }
 
+type SheetPhase = 'detect' | 'redact' | 'done';
+
 function HeroSheet({ p }: { p: MotionValue<number> }) {
   const entities = useMemo(() => detectPII(HERO_RECORD, CATEGORIES).entities, []);
   const n = entities.length;
@@ -349,8 +350,8 @@ function HeroSheet({ p }: { p: MotionValue<number> }) {
   };
 
   const [redacted, setRedacted] = useState(0);
-  const [phase, setPhase] = useState<'detect' | 'redact' | 'done'>('detect');
-  const last = useRef({ count: 0, phase: 'detect' as 'detect' | 'redact' | 'done' });
+  const [phase, setPhase] = useState<SheetPhase>('detect');
+  const last = useRef<{ count: number; phase: SheetPhase }>({ count: 0, phase: 'detect' });
   useMotionValueEvent(p, 'change', (v) => {
     let count = 0;
     for (let i = 0; i < n; i++) if (v >= windowFor(i).to) count++;

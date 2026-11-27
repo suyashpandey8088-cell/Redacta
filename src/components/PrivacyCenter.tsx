@@ -14,7 +14,7 @@ const STEPS = [
   { title: 'Detect', desc: 'Six detectors scan the text on your device.' },
   { title: 'Validate', desc: 'Luhn, range and format checks remove false positives.' },
   { title: 'Redact', desc: 'Each mode is regenerated from the untouched original.' },
-  { title: 'Download', desc: 'A Blob is saved to your device; its object URL is revoked immediately.' },
+  { title: 'Download', desc: 'A Blob is saved to your device; its object URL is revoked as soon as the download starts.' },
 ];
 
 const NEVER = [

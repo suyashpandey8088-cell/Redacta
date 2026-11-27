@@ -24,6 +24,7 @@ Redacta finds and redacts personal data — emails, phone numbers, IP addresses,
 - Candidates that match a pattern but fail validation are **rejected**: they are left unchanged and listed with the reason.
 - Overlap resolution keeps one entity per span; adjacent values (an Aadhaar next to a card) are segmented correctly.
 - Ordinary numbers such as order IDs, years and amounts are ignored.
+- Scanning is linear-time: email detection uses an `@`-anchored scanner rather than a backtracking regex, and positions come from a single line index, so large or adversarial inputs (long dotted tokens, huge digit runs) can't freeze the tab.
 
 ### Redaction modes (always regenerated from the original text)
 
@@ -79,7 +80,7 @@ Exports are named after the source file (`customer-record-sample-sanitized.txt`)
 
 ## Getting started
 
-Requires Node.js 18 or newer.
+Requires Node.js 22.12 or newer.
 
 ```bash
 npm install
@@ -88,10 +89,15 @@ npm run dev        # http://localhost:5173
 
 | Command | Description |
 |---|---|
-| `npm run dev` | Start the dev server |
+| `npm run dev` | Start the dev server (localhost only) |
 | `npm run build` | Type-check with `tsc`, then build to `dist/` |
 | `npm run preview` | Serve the production build |
 | `npm test` | Run the Vitest suite |
+| `npm run lint` | ESLint with type-aware TypeScript and React Hooks rules |
+| `npm run typecheck` | `tsc` only |
+| `npm run check` | Type-check, lint and test — the same gate CI runs |
+
+The dev and preview servers listen on `localhost`. To reach them from another device or from inside a container, opt in with `REDACTA_EXPOSE=1 npm run dev` — this binds to all interfaces and accepts any Host header, so only use it on a trusted network.
 
 ---
 
@@ -102,12 +108,16 @@ src/
 ├── lib/
 │   ├── pii.ts            # Detection, validation, redaction, pseudonyms, CSV
 │   ├── pii.test.ts       # Engine tests
+│   ├── pii.engine.test.ts # Email scanner equivalence fuzzing, line index, performance guards
+│   ├── files.ts          # File validation, safe export names, Blob downloads, clipboard
+│   ├── files.test.ts
 │   ├── sample.ts         # Synthetic sample record, sample CSV, landing snippets
 │   ├── smoothScroll.ts   # Lenis smooth scroll, anchor jumps, reduced-motion switch
 │   └── audit.ts          # Metadata-only audit events and report export
 ├── components/
 │   ├── Landing.tsx       # Scroll-driven landing page
 │   ├── fx.tsx            # Landing effects: scramble text, split reveal, intro curtain, section wipe
+│   ├── sectionWipe.ts    # Section-jump context shared by the nav and the wipe overlay
 │   ├── Workspace.tsx     # Top bar, tabs, Sanitize toolbar and view routing
 │   ├── Editor.tsx        # Highlight overlay editor + inspector
 │   ├── FindingsPanel.tsx # Summary, type filters, values, rejected list
@@ -117,6 +127,8 @@ src/
 │   ├── AuditCenter.tsx
 │   ├── PrivacyCenter.tsx
 │   └── ui.tsx            # Logo, view header, segmented control, empty state
+├── hooks/
+│   └── useMediaQuery.ts  # Live CSS media-query subscription
 ├── App.tsx               # State, scanning, live re-scan, exports, audit, toasts
 ├── main.tsx
 └── index.css
@@ -130,7 +142,7 @@ src/
 npm test
 ```
 
-19 tests cover the Luhn check, all six detectors, rejection of invalid candidates, IPv4 range checks, ignoring ordinary numbers, disabled types, card-versus-Aadhaar overlap, partial-mask safety, pseudonym consistency, regenerating modes from the original, CSV quoting round-trips, CSV alias consistency across rows, reuse of document-level aliases in CSV export, values never running across a line break, and the full sample record (9 values found, 1 rejected).
+35 tests. The engine suite covers the Luhn check, all six detectors, rejection of invalid candidates, IPv4 range checks, ignoring ordinary numbers, disabled types, card-versus-Aadhaar overlap, partial-mask safety, pseudonym consistency, regenerating modes from the original, CSV quoting round-trips, CSV alias consistency across rows, reuse of document-level aliases in CSV export, values never running across a line break, and the full sample record (9 values found, 1 rejected). The email scanner is fuzzed against the reference regex on 60,000 generated strings, inputs that previously took 20–40 seconds are guarded with time limits, and the file helpers are tested for size, type and binary rejection and safe export names.
 
 ---
 
@@ -138,7 +150,10 @@ npm test
 
 - All processing happens in the browser; documents are never transmitted or persisted.
 - Original input and sanitized output are kept separately in memory, and every mode is regenerated from the original.
-- Downloads are Blob URLs that are revoked immediately after use.
+- Downloads are Blob URLs that are revoked as soon as the download starts.
+- Production builds ship a Content-Security-Policy with `connect-src 'none'`: the browser itself blocks any network request (fetch, XHR, WebSocket, beacon) from the page, so document contents cannot be sent anywhere even by injected code. Scripts, styles and fonts load only from the app's own origin.
+- Imports are limited to 5 MB of plain text; binary files are rejected before they reach the editor.
+- ESLint forbids `eval`, raw HTML injection, web storage, cookies and network APIs in application code.
 - Audit entries contain counts, modes and timings — never the detected values.
 - Redacta makes no claims of third-party certification or external security audits.
 

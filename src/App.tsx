@@ -2,13 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import Landing from './components/Landing';
 import Workspace, { type WorkspaceTab } from './components/Workspace';
-import { MODE_LABEL } from './components/ui';
 import {
   buildPseudonymMap,
   detectPII,
   sanitizeCSV,
   sanitizeWithSegments,
   CATEGORIES,
+  MODE_LABEL,
   type Category,
   type DetectionResult,
   type RedactionMode,
@@ -16,35 +16,10 @@ import {
 } from './lib/pii';
 import { SAMPLE_CSV, SAMPLE_CSV_FILENAME, SAMPLE_DOCUMENT, SAMPLE_FILENAME } from './lib/sample';
 import { exportAudit, makeEvent, type AuditEvent } from './lib/audit';
+import { MAX_DOCUMENT_BYTES, copyText, downloadText, exportFileName, formatBytes, readTextFile, type FileKind } from './lib/files';
 
 /** Documents up to this size are re-scanned on every edit after the first scan. */
 const LIVE_SCAN_LIMIT = 60_000;
-
-function downloadText(content: string, filename: string, mime: string) {
-  const blob = new Blob([content], { type: `${mime};charset=utf-8` });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function baseName(name: string) {
-  const stem = name.replace(/\.[^.]+$/, '').trim();
-  return stem || 'document';
-}
 
 export default function App() {
   const [view, setView] = useState<'home' | 'app'>('home');
@@ -52,7 +27,7 @@ export default function App() {
 
   const [docText, setDocText] = useState('');
   const [fileName, setFileName] = useState('');
-  const [fileKind, setFileKind] = useState<'txt' | 'csv'>('txt');
+  const [fileKind, setFileKind] = useState<FileKind>('txt');
 
   const [mode, setMode] = useState<RedactionMode>('PARTIAL');
   const [enabledCats, setEnabledCats] = useState<Category[]>([...CATEGORIES]);
@@ -103,7 +78,7 @@ export default function App() {
   const selectedIndex = selected ? entities.findIndex((e) => e.id === selected.id) : -1;
 
   const applyScan = useCallback(
-    (text: string, cats: Category[], kind: 'txt' | 'csv') => {
+    (text: string, cats: Category[], kind: FileKind) => {
       logAudit('Scan started', 'info', `${kind.toUpperCase()} · ${text.length} chars · ${cats.length} categories`);
       const res = detectPII(text, cats);
       setResult(res);
@@ -119,7 +94,7 @@ export default function App() {
 
   /* Import a document from any source and scan it immediately. */
   const importAndScan = useCallback(
-    (text: string, name: string, kind: 'txt' | 'csv', source: string) => {
+    (text: string, name: string, kind: FileKind, source: string) => {
       setDocText(text);
       setFileName(name);
       setFileKind(kind);
@@ -134,19 +109,12 @@ export default function App() {
 
   const handleFile = useCallback(
     async (file: File) => {
-      const lower = file.name.toLowerCase();
-      const isCsv = lower.endsWith('.csv') || file.type === 'text/csv';
-      const isText = isCsv || lower.endsWith('.txt') || file.type.startsWith('text/');
-      if (!isText) {
-        showToast('Only .txt and .csv files are supported');
+      const read = await readTextFile(file);
+      if (!read.ok) {
+        showToast(read.message);
         return;
       }
-      try {
-        const text = await file.text();
-        importAndScan(text, file.name, isCsv ? 'csv' : 'txt', 'file');
-      } catch {
-        showToast('That file could not be read');
-      }
+      importAndScan(read.text, file.name, read.kind, 'file');
     },
     [importAndScan, showToast],
   );
@@ -224,16 +192,16 @@ export default function App() {
       showToast('Run a scan before exporting');
       return;
     }
-    const stem = `${baseName(fileName)}-sanitized`;
+    const name = exportFileName(fileName, fileKind);
     if (fileKind === 'csv') {
       const { output } = sanitizeCSV(docText, enabledCats, mode, pseudonymMap);
-      downloadText(output, `${stem}.csv`, 'text/csv');
+      downloadText(output, name, 'text/csv');
       logAudit('Export generated', 'success', `CSV · ${MODE_LABEL[mode]}`);
     } else {
-      downloadText(sanitized, `${stem}.txt`, 'text/plain');
+      downloadText(sanitized, name, 'text/plain');
       logAudit('Export generated', 'success', `TXT · ${MODE_LABEL[mode]}`);
     }
-    showToast(`Saved ${stem}.${fileKind}`);
+    showToast(`Saved ${name}`);
   }, [result, fileName, fileKind, docText, enabledCats, mode, pseudonymMap, sanitized, logAudit, showToast]);
 
   const copySanitized = useCallback(async () => {
@@ -302,10 +270,12 @@ export default function App() {
   const pasteFromClipboard = useCallback(async () => {
     try {
       const text = await navigator.clipboard.readText();
-      if (text) {
-        importAndScan(text, 'pasted-text.txt', 'txt', 'clipboard');
-      } else {
+      if (!text) {
         showToast('The clipboard is empty');
+      } else if (text.length > MAX_DOCUMENT_BYTES) {
+        showToast(`Pasted text is over the ${formatBytes(MAX_DOCUMENT_BYTES)} limit`);
+      } else {
+        importAndScan(text, 'pasted-text.txt', 'txt', 'clipboard');
       }
     } catch {
       showToast('Clipboard access was blocked — click the sheet and press Ctrl+V');

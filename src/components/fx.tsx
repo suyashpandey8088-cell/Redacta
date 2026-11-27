@@ -1,10 +1,7 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import {
-  motion,
-  stagger,
-  useAnimate,
-} from 'framer-motion';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { motion, stagger, useAnimate } from 'framer-motion';
 import { prefersReducedMotion, scrollToTarget } from '../lib/smoothScroll';
+import { WipeContext, type WipeFn } from './sectionWipe';
 
 const GLYPHS = '*•X#@%&0123456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 
@@ -31,23 +28,18 @@ export function Scramble({
   duration?: number;
   className?: string;
 }) {
-  const [out, setOut] = useState(text);
+  /* The in-flight scrambled string; null whenever the real text should show. */
+  const [scrambled, setScrambled] = useState<string | null>(null);
   const played = useRef(false);
   const mounted = useRef(false);
 
   useEffect(() => {
     const first = !mounted.current;
     mounted.current = true;
-    if (!active) {
-      setOut(text);
-      return;
-    }
+    if (!active) return;
     const shouldAnimate = !prefersReducedMotion() && (played.current || animateOnMount || !first);
     played.current = true;
-    if (!shouldAnimate) {
-      setOut(text);
-      return;
-    }
+    if (!shouldAnimate) return;
     let raf = 0;
     let lastPaint = 0;
     const start = performance.now();
@@ -65,19 +57,25 @@ export function Scramble({
         const ch = text[i];
         s += i < settled || /[\s.,:@\-–—()[\]]/.test(ch) ? ch : GLYPHS[(Math.random() * GLYPHS.length) | 0];
       }
-      setOut(s);
-      if (t < 1) raf = requestAnimationFrame(tick);
-      else setOut(text);
+      if (t < 1) {
+        setScrambled(s);
+        raf = requestAnimationFrame(tick);
+      } else {
+        setScrambled(null);
+      }
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      setScrambled(null);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text, active]);
 
   return (
     <span className={className}>
       <span className="sr-only">{text}</span>
-      <span aria-hidden="true">{out}</span>
+      <span aria-hidden="true">{scrambled ?? text}</span>
     </span>
   );
 }
@@ -160,23 +158,12 @@ export function IntroCurtain() {
 /* Section wipe — ink bars cover the screen while jumping to a section  */
 /* ------------------------------------------------------------------ */
 
-type WipeFn = (target: string | 'top') => void;
-const WipeContext = createContext<WipeFn>((target) => {
-  if (target === 'top') scrollToTarget(0);
-  else {
-    const el = document.getElementById(target);
-    if (el) scrollToTarget(el);
-  }
-});
-
-export const useSectionWipe = () => useContext(WipeContext);
-
 export function SectionWipeProvider({ children }: { children: ReactNode }) {
   const [scope, animate] = useAnimate<HTMLDivElement>();
   const busy = useRef(false);
 
-  const wipe = useCallback<WipeFn>(
-    async (target) => {
+  const run = useCallback(
+    async (target: string) => {
       const el = target === 'top' ? null : document.getElementById(target);
       if (target !== 'top' && !el) return;
       const jump = (immediate: boolean) => (el ? scrollToTarget(el, { immediate }) : scrollToTarget(0, { immediate }));
@@ -202,6 +189,7 @@ export function SectionWipeProvider({ children }: { children: ReactNode }) {
     },
     [animate, scope],
   );
+  const wipe = useCallback<WipeFn>((target) => void run(target), [run]);
 
   return (
     <WipeContext.Provider value={wipe}>
