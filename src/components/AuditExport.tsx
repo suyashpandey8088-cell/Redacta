@@ -1,8 +1,11 @@
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, type CSSProperties } from 'react';
 import { Copy, Download, FileText, Loader2, ScanLine } from 'lucide-react';
 import { CATEGORIES, CATEGORY_META, MODE_LABEL, type Category, type DetectionResult, type Entity, type RedactionMode, type Segment } from '../lib/pii';
 import { exportFileName } from '../lib/files';
 import { Swatch } from './ui';
+import { DocumentTextarea } from './DocumentTextarea';
+import { LINE_HEIGHT, PAD, VirtualGutter, VirtualOverlay, VirtualScrollText, type GutterTone, type Mark, type ScrollSync } from './VirtualText';
+import { useTextLayout } from '../hooks/useTextLayout';
 
 interface AuditExportProps {
   docText: string;
@@ -23,69 +26,18 @@ interface AuditExportProps {
   onCopy: () => void;
 }
 
-const LINE_HEIGHT = 22;
-const PAD = 16;
-
 /* Diff colours: removed text (original) and inserted text (sanitized). */
-const REMOVED = { line: 'rgba(217,56,30,0.07)', span: 'rgba(217,56,30,0.2)', mark: '#C2361C' };
-const ADDED = { line: 'rgba(31,122,77,0.08)', span: 'rgba(31,122,77,0.2)', mark: '#1F7A4D' };
-
-/** Full-width tint behind every changed line, drawn under the text. */
-function LineBands({ lines, color }: { lines: number[]; color: string }) {
-  return (
-    <>
-      {lines.map((ln) => (
-        <div
-          key={ln}
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0"
-          style={{ top: PAD + (ln - 1) * LINE_HEIGHT, height: LINE_HEIGHT, background: color }}
-        />
-      ))}
-    </>
-  );
-}
-
-function Gutter({
-  gutterRef,
-  lineCount,
-  changed,
-  side,
-}: {
-  gutterRef: React.RefObject<HTMLDivElement>;
-  lineCount: number;
-  changed: Set<number>;
-  side: 'removed' | 'added';
-}) {
-  const tone = side === 'removed' ? REMOVED : ADDED;
-  return (
-    <div
-      ref={gutterRef}
-      className="w-14 shrink-0 select-none overflow-hidden border-r border-rule/70 bg-paper/50"
-      style={{ paddingTop: PAD, paddingBottom: PAD }}
-      aria-hidden="true"
-    >
-      {Array.from({ length: lineCount }, (_, i) => {
-        const isChanged = changed.has(i + 1);
-        return (
-          <div
-            key={i}
-            className="flex items-center justify-between pl-2 pr-3 font-mono text-[11px]"
-            style={{
-              height: LINE_HEIGHT,
-              lineHeight: `${LINE_HEIGHT}px`,
-              background: isChanged ? tone.line : undefined,
-              color: isChanged ? tone.mark : '#C6C0B0',
-            }}
-          >
-            <span className="font-medium">{isChanged ? (side === 'removed' ? '−' : '+') : ''}</span>
-            <span>{i + 1}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
+const REMOVED = { line: 'rgba(217,56,30,0.07)', span: 'rgba(217,56,30,0.2)', mark: '#952A16' };
+const ADDED = { line: 'rgba(31,122,77,0.08)', span: 'rgba(31,122,77,0.2)', mark: '#185E3B' };
+const markStyles = (background: string, extra: CSSProperties = {}) =>
+  Object.fromEntries(
+    CATEGORIES.map((c) => [c, { background, boxShadow: `inset 0 -1.5px 0 ${CATEGORY_META[c].color}`, borderRadius: 1, ...extra }]),
+  ) as Record<Category, CSSProperties>;
+/* Shared style objects: the virtual text layer skips lines whose marks are unchanged by identity. */
+const REMOVED_STYLE = markStyles(REMOVED.span);
+const ADDED_STYLE = markStyles(ADDED.span, { fontWeight: 500 });
+const REMOVED_TONE: GutterTone = { line: REMOVED.line, mark: REMOVED.mark, symbol: '−' };
+const ADDED_TONE: GutterTone = { line: ADDED.line, mark: ADDED.mark, symbol: '+' };
 
 function PanelHead({ title, children }: { title: React.ReactNode; children?: React.ReactNode }) {
   return (
@@ -115,16 +67,16 @@ export default function AuditExport({
   onCopy,
 }: AuditExportProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const leftBackdropRef = useRef<HTMLDivElement>(null);
-  const leftGutterRef = useRef<HTMLDivElement>(null);
+  const leftOverlayRef = useRef<ScrollSync>(null);
+  const leftGutterRef = useRef<ScrollSync>(null);
   const rightScrollRef = useRef<HTMLDivElement>(null);
-  const rightGutterRef = useRef<HTMLDivElement>(null);
+  const rightGutterRef = useRef<ScrollSync>(null);
   /** Which side started the current scroll, so the mirrored scroll event is ignored. */
   const scrollLead = useRef<'left' | 'right' | null>(null);
 
-  const lineCount = useMemo(() => docText.split('\n').length, [docText]);
+  const originalLayout = useTextLayout(docText);
+  const lineCount = originalLayout.starts.length;
   const changed = useMemo(() => new Set(entities.map((e) => e.line)), [entities]);
-  const changedList = useMemo(() => [...changed].sort((a, b) => a - b), [changed]);
 
   const counts = useMemo(() => {
     const c = Object.fromEntries(CATEGORIES.map((k) => [k, 0])) as Record<Category, number>;
@@ -139,62 +91,44 @@ export default function AuditExport({
   const isLive = !!result && docText.length <= liveLimit;
   const outName = exportFileName(fileName, fileKind);
 
-  const original = useMemo(() => {
-    if (entities.length === 0) return docText;
-    const sorted = [...entities].sort((a, b) => a.start - b.start);
-    const nodes: React.ReactNode[] = [];
-    let cursor = 0;
-    sorted.forEach((e, i) => {
-      if (e.start > cursor) nodes.push(<span key={`p-${i}`}>{docText.slice(cursor, e.start)}</span>);
-      nodes.push(
-        <span
-          key={e.id}
-          style={{ background: REMOVED.span, boxShadow: `inset 0 -1.5px 0 ${CATEGORY_META[e.category].color}`, borderRadius: 1 }}
-        >
-          {docText.slice(e.start, e.end)}
-        </span>,
-      );
-      cursor = e.end;
-    });
-    if (cursor < docText.length) nodes.push(<span key="tail">{docText.slice(cursor)}</span>);
-    return nodes;
-  }, [docText, entities]);
-
-  const sanitized = useMemo(
+  const originalMarks = useMemo<Mark[]>(
     () =>
-      segments.map((s, i) =>
-        s.isReplacement && s.category ? (
-          <span
-            key={i}
-            title={CATEGORY_META[s.category].label}
-            style={{
-              background: ADDED.span,
-              boxShadow: `inset 0 -1.5px 0 ${CATEGORY_META[s.category].color}`,
-              borderRadius: 1,
-              fontWeight: 500,
-            }}
-          >
-            {s.text}
-          </span>
-        ) : (
-          <span key={i}>{s.text}</span>
-        ),
-      ),
-    [segments],
+      entities.map((e) => ({
+        start: e.start,
+        end: e.end,
+        style: REMOVED_STYLE[e.category],
+      })),
+    [entities],
   );
+
+  /* Sanitized text and replacement marks in output coordinates. Output is line-for-line with the original. */
+  const { sanitizedText, sanitizedMarks } = useMemo(() => {
+    const marks: Mark[] = [];
+    let offset = 0;
+    for (const seg of segments) {
+      if (seg.isReplacement && seg.category) {
+        marks.push({
+          start: offset,
+          end: offset + seg.text.length,
+          title: CATEGORY_META[seg.category].label,
+          style: ADDED_STYLE[seg.category],
+        });
+      }
+      offset += seg.text.length;
+    }
+    return { sanitizedText: segments.map((seg) => seg.text).join(''), sanitizedMarks: marks };
+  }, [segments]);
+  const sanitizedLayout = useTextLayout(sanitizedText);
 
   const handleScroll = (side: 'left' | 'right') => {
     const src = side === 'left' ? textareaRef.current : rightScrollRef.current;
     if (!src) return;
     /* Keep this side's own layers aligned. */
     if (side === 'left') {
-      if (leftBackdropRef.current) {
-        leftBackdropRef.current.scrollTop = src.scrollTop;
-        leftBackdropRef.current.scrollLeft = src.scrollLeft;
-      }
-      if (leftGutterRef.current) leftGutterRef.current.scrollTop = src.scrollTop;
-    } else if (rightGutterRef.current) {
-      rightGutterRef.current.scrollTop = src.scrollTop;
+      leftOverlayRef.current?.sync(src.scrollTop, src.scrollLeft);
+      leftGutterRef.current?.sync(src.scrollTop, 0);
+    } else {
+      rightGutterRef.current?.sync(src.scrollTop, 0);
     }
     /* Mirror to the other side, unless this event is itself the mirror. */
     if (scrollLead.current && scrollLead.current !== side) return;
@@ -311,21 +245,13 @@ export default function AuditExport({
             )}
           </PanelHead>
           <div className="relative flex min-h-0 flex-1">
-            <Gutter gutterRef={leftGutterRef} lineCount={lineCount} changed={changed} side="removed" />
+            <VirtualGutter ref={leftGutterRef} lineCount={lineCount} changed={changed} tone={REMOVED_TONE} className="w-14" />
             <div className="relative min-w-0 flex-1">
-              <div ref={leftBackdropRef} aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
-                <div className="relative min-h-full w-max min-w-full">
-                  <LineBands lines={changedList} color={REMOVED.line} />
-                  <pre className="relative whitespace-pre font-mono text-[13px] text-ink" style={textStyle}>
-                    {original}
-                    {'\n'}
-                  </pre>
-                </div>
-              </div>
-              <textarea
+              <VirtualOverlay ref={leftOverlayRef} layout={originalLayout} marks={originalMarks} bands={changed} bandColor={REMOVED.line} />
+              <DocumentTextarea
                 ref={textareaRef}
                 value={docText}
-                onChange={(e) => onTextChange(e.target.value)}
+                onValueChange={onTextChange}
                 onScroll={() => handleScroll('left')}
                 wrap="off"
                 spellCheck={false}
@@ -355,16 +281,17 @@ export default function AuditExport({
           </PanelHead>
           {result ? (
             <div className="relative flex min-h-0 flex-1">
-              <Gutter gutterRef={rightGutterRef} lineCount={lineCount} changed={changed} side="added" />
-              <div ref={rightScrollRef} onScroll={() => handleScroll('right')} className="scroll-quiet min-w-0 flex-1 overflow-auto">
-                <div className="relative min-h-full w-max min-w-full">
-                  <LineBands lines={changedList} color={ADDED.line} />
-                  <pre className="relative whitespace-pre font-mono text-[13px] text-ink" style={textStyle}>
-                    {sanitized}
-                    {'\n'}
-                  </pre>
-                </div>
-              </div>
+              <VirtualGutter ref={rightGutterRef} lineCount={sanitizedLayout.starts.length} changed={changed} tone={ADDED_TONE} className="w-14" />
+              <VirtualScrollText
+                ref={rightScrollRef}
+                layout={sanitizedLayout}
+                marks={sanitizedMarks}
+                bands={changed}
+                bandColor={ADDED.line}
+                onScroll={() => handleScroll('right')}
+                label="Sanitized output"
+                className="scroll-quiet min-w-0 flex-1"
+              />
             </div>
           ) : (
             <div className="flex flex-1 flex-col items-start justify-center gap-3 px-6 py-10 sm:px-10">

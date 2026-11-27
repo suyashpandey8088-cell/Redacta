@@ -8,6 +8,7 @@ import {
   sanitizeCSV,
   sanitizeText,
   serializeCSV,
+  guardFormula,
   type Category,
 } from './pii';
 
@@ -160,6 +161,22 @@ describe('CSV', () => {
     const docMap = buildPseudonymMap(detectPII(csv, ALL).entities);
     const { output } = sanitizeCSV(csv, ALL, 'PSEUDONYM', docMap);
     expect(output).toBe('name,email\nPriya,USER_01\nAarav,USER_02');
+  });
+
+  it('neutralizes spreadsheet formulas but leaves plain numbers alone', () => {
+    expect(guardFormula('=HYPERLINK("http://x","y")')).toBe('\'=HYPERLINK("http://x","y")');
+    expect(guardFormula('@SUM(A1)')).toBe("'@SUM(A1)");
+    expect(guardFormula('+cmd|x')).toBe("'+cmd|x");
+    expect(guardFormula('\t=1')).toBe("'\t=1");
+    for (const n of ['-12', '+3.5', '-0.25', '1e5', '-.5', 'plain', '']) expect(guardFormula(n)).toBe(n);
+  });
+
+  it('guards formulas in sanitized CSV exports', () => {
+    const csv = 'note,email,delta\n"=1+2",a@b.com,-4\n@cmd,x,+7';
+    const { output } = sanitizeCSV(csv, ALL, 'FULL');
+    expect(output).toBe("note,email,delta\n'=1+2,[REDACTED],-4\n'@cmd,x,+7");
+    /* Partial masking never leaves a leading "+" behind. */
+    expect(sanitizeCSV('phone\n+91 98765 43210', ALL, 'PARTIAL').output).toBe('phone\n••••••3210');
   });
 });
 

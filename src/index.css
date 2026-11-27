@@ -19,12 +19,25 @@
     outline: 2px solid #16150f;
     outline-offset: 2px;
   }
+  /* Keep the focus ring visible on dark surfaces and inside scroll containers. */
+  .bg-night :focus-visible,
+  .bg-ink :focus-visible {
+    outline-color: #f3f0e8;
+  }
+  main:focus-visible,
+  [role='region']:focus-visible {
+    outline-offset: -2px;
+  }
   button {
     -webkit-tap-highlight-color: transparent;
   }
 }
 
 @layer components {
+  /* Hidden until focused: lets keyboard users jump past the navigation. */
+  .skip-link {
+    @apply sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-[3px] focus:bg-ink focus:px-4 focus:py-2.5 focus:text-[13px] focus:font-medium focus:text-paper;
+  }
   .label {
     @apply font-mono text-[11px] font-medium uppercase tracking-label text-muted;
   }

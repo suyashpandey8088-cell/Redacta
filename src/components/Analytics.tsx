@@ -4,7 +4,7 @@ import {
   CATEGORIES,
   CATEGORY_META,
   MODE_LABEL,
-  sanitizeText,
+  replacementFor,
   type DetectionResult,
   type Entity,
   type RedactionMode,
@@ -43,10 +43,14 @@ export default function Analytics({ result, docText, entities, pseudonymMap, mod
     return out;
   }, [entities, lineCount]);
 
-  const modeOutputs = useMemo(
-    () => MODES.map((m) => ({ mode: m, chars: sanitizeText(docText, entities, m, pseudonymMap).length })),
-    [docText, entities, pseudonymMap],
-  );
+  /* Output length = original − replaced spans + replacements; no need to build each sanitized document. */
+  const modeOutputs = useMemo(() => {
+    const removed = entities.reduce((n, e) => n + (e.end - e.start), 0);
+    return MODES.map((m) => ({
+      mode: m,
+      chars: docText.length - removed + entities.reduce((n, e) => n + replacementFor(e, m, pseudonymMap).length, 0),
+    }));
+  }, [docText, entities, pseudonymMap]);
 
   if (!result) {
     return (
@@ -207,7 +211,7 @@ export default function Analytics({ result, docText, entities, pseudonymMap, mod
                   <tr key={row.mode} className="border-b border-rule/70 last:border-b-0">
                     <td className="px-5 py-3 text-[13px] font-medium text-ink">
                       {MODE_LABEL[row.mode]}
-                      {row.mode === mode && <span className="ml-2 font-mono text-[10.5px] font-normal uppercase tracking-label text-signal">active</span>}
+                      {row.mode === mode && <span className="ml-2 font-mono text-[10.5px] font-normal uppercase tracking-label text-signal-ink">active</span>}
                     </td>
                     <td className="tabular px-5 py-3 font-mono text-[12.5px] text-ink">{total}</td>
                     <td className="tabular px-5 py-3 font-mono text-[12.5px] text-ink">{row.chars.toLocaleString()} chars</td>

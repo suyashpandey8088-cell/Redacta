@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Check } from 'lucide-react';
 import { CATEGORIES, CATEGORY_META, createLineIndex, maskedPreview, type Category, type DetectionResult } from '../lib/pii';
 import { Swatch } from './ui';
@@ -12,6 +12,8 @@ interface FindingsPanelProps {
   onSelectEntity: (id: string) => void;
 }
 
+const PAGE_SIZE = 200;
+
 export default function FindingsPanel({
   result,
   docText,
@@ -23,6 +25,12 @@ export default function FindingsPanel({
   const entities = useMemo(() => result?.entities ?? [], [result]);
   const rejected = useMemo(() => result?.rejected ?? [], [result]);
   const total = entities.length;
+  /* Long documents can produce 100k+ findings; render them a page at a time. */
+  const [limit, setLimit] = useState(PAGE_SIZE);
+  /* A value selected in the editor stays listed even when it sits past the pages shown so far. */
+  const selectedIndex = useMemo(() => (selectedId ? entities.findIndex((e) => e.id === selectedId) : -1), [entities, selectedId]);
+  const visibleCount = Math.max(limit, Math.ceil((selectedIndex + 1) / PAGE_SIZE) * PAGE_SIZE);
+  const shown = useMemo(() => entities.slice(0, visibleCount), [entities, visibleCount]);
 
   const counts = useMemo(
     () => CATEGORIES.map((c) => ({ category: c, count: entities.filter((e) => e.category === c).length })),
@@ -125,7 +133,7 @@ export default function FindingsPanel({
           </p>
         ) : (
           <ol className="mt-2">
-            {entities.map((e, i) => {
+            {shown.map((e, i) => {
               const active = selectedId === e.id;
               return (
                 <li key={e.id}>
@@ -136,7 +144,7 @@ export default function FindingsPanel({
                       active ? 'bg-ink text-paper' : 'hover:bg-ink/[0.04]'
                     }`}
                   >
-                    <span className={`tabular w-5 shrink-0 font-mono text-[10.5px] ${active ? 'text-paper/60' : 'text-muted'}`}>
+                    <span className={`tabular min-w-5 shrink-0 font-mono text-[10.5px] ${active ? 'text-paper/60' : 'text-muted'}`}>
                       {String(i + 1).padStart(2, '0')}
                     </span>
                     <span className="min-w-0 flex-1">
@@ -154,6 +162,14 @@ export default function FindingsPanel({
             })}
           </ol>
         )}
+        {entities.length > shown.length && (
+          <button onClick={() => setLimit(shown.length + PAGE_SIZE)} className="btn-line mt-3 w-full justify-center py-2">
+            Show {Math.min(PAGE_SIZE, entities.length - shown.length).toLocaleString()} more
+            <span className="font-mono text-[11px] font-normal text-muted">
+              {shown.length.toLocaleString()} of {entities.length.toLocaleString()}
+            </span>
+          </button>
+        )}
 
         {rejectedRows.length > 0 && (
           <div className="mt-6">
@@ -165,7 +181,7 @@ export default function FindingsPanel({
                     <span className="block text-[12px] text-ink">
                       {CATEGORY_META[r.category].label} · Ln {r.line}
                     </span>
-                    <span className="block font-mono text-[11px] text-signal">{r.reason}</span>
+                    <span className="block font-mono text-[11px] text-signal-ink">{r.reason}</span>
                   </span>
                 </li>
               ))}

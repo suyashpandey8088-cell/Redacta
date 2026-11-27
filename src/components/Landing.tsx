@@ -44,7 +44,10 @@ export default function Landing({ onLaunch, onLoadSample }: LandingProps) {
         <div className="bg-paper text-ink">
           <IntroCurtain />
           <Nav onLaunch={onLaunch} />
-          <main>
+          <a href="#content" className="skip-link">
+            Skip to content
+          </a>
+          <main id="content" tabIndex={-1} className="focus:outline-none">
             <Hero onLaunch={onLaunch} onLoadSample={onLoadSample} />
             <Ticker />
             <Detection />
@@ -436,7 +439,7 @@ function HeroSheet({ p }: { p: MotionValue<number> }) {
         <motion.div
           aria-hidden="true"
           style={{ opacity: stampOpacity, scale: stampScale, rotate: -7 }}
-          className="pointer-events-none absolute right-4 top-[118px] border-[2.5px] border-signal bg-sheet/90 px-3 py-1.5 text-signal sm:right-7 sm:top-[128px]"
+          className="pointer-events-none absolute right-4 top-[118px] border-[2.5px] border-signal bg-sheet/90 px-3 py-1.5 text-signal-ink sm:right-7 sm:top-[128px]"
         >
           <span className="block font-mono text-[15px] font-medium tracking-[0.18em] sm:text-[17px]">SANITIZED</span>
           <span className="block font-mono text-[9.5px] tracking-[0.16em]">PROCESSED LOCALLY</span>
@@ -659,7 +662,7 @@ function DetectorRow({ d, i }: { d: (typeof DETECTORS)[number]; i: number }) {
         aria-hidden="true"
         className="absolute bottom-[-1px] left-0 h-[2px] w-full origin-left scale-x-0 bg-signal transition-transform duration-500 ease-out group-hover:scale-x-100"
       />
-      <span className="tabular font-mono text-[12px] text-muted transition-transform duration-300 group-hover:translate-x-1 group-hover:text-signal">
+      <span className="tabular font-mono text-[12px] text-muted transition-transform duration-300 group-hover:translate-x-1 group-hover:text-signal-ink">
         {String(i + 1).padStart(2, '0')}
       </span>
       <span className="flex items-center gap-3">
@@ -710,7 +713,7 @@ function RejectedProbe({ reason, count }: { reason: string; count: number }) {
             />
           </span>
           <ArrowRight className="h-4 w-4 text-muted" aria-hidden="true" />
-          <span className="text-signal">
+          <span className="text-signal-ink">
             <Scramble text={reason} active={inView} duration={1000} />
           </span>
         </p>
@@ -865,7 +868,7 @@ function Modes() {
                     </span>
                     <span
                       className={`mt-1.5 block pl-[34px] text-[14.5px] leading-relaxed transition-colors duration-300 ${
-                        active === i ? 'text-ink-2' : 'text-muted/70'
+                        active === i ? 'text-ink-2' : 'text-muted'
                       }`}
                     >
                       {m.desc}
@@ -1073,7 +1076,7 @@ function Architecture() {
             <ul className="mt-6 space-y-4">
               {NEVER.map((t) => (
                 <li key={t} className="flex gap-3 text-[14.5px] leading-relaxed text-[#E4E0D6]">
-                  <Minus className="mt-1 h-4 w-4 shrink-0 text-signal" aria-hidden="true" />
+                  <Minus className="mt-1 h-4 w-4 shrink-0 text-signal-ink" aria-hidden="true" />
                   {t}
                 </li>
               ))}

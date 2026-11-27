@@ -33,7 +33,7 @@ export default function AuditCenter({ events, onExport, onClearSession, onGoSani
             </button>
             <button
               onClick={onClearSession}
-              className="btn border border-signal px-4 py-2 text-signal hover:bg-signal hover:text-paper"
+              className="btn border border-signal px-4 py-2 text-signal-ink hover:bg-signal-ink hover:text-paper"
             >
               <Trash2 className="h-3.5 w-3.5" /> Clear session
             </button>

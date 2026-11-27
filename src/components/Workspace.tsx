@@ -109,6 +109,10 @@ export default function Workspace(props: WorkspaceProps) {
         }}
       />
 
+      <a href="#content" className="skip-link">
+        Skip to content
+      </a>
+
       {/* Top bar */}
       <header className="shrink-0 border-b border-rule bg-paper">
         <div className="flex h-14 items-center gap-3 px-4 sm:px-5">
@@ -117,7 +121,7 @@ export default function Workspace(props: WorkspaceProps) {
           <div className="hidden min-w-0 items-baseline gap-3 sm:flex">
             <span className="truncate font-mono text-[12.5px] text-ink">{fileName || 'untitled.txt'}</span>
             <span className="shrink-0 font-mono text-[10.5px] uppercase tracking-label text-muted">{docText ? fileKind : ''}</span>
-            <span className={`shrink-0 text-[12.5px] ${stale && !result ? 'text-signal' : 'text-ink-3'}`}>{status}</span>
+            <span className={`shrink-0 text-[12.5px] ${stale && !result ? 'text-signal-ink' : 'text-ink-3'}`}>{status}</span>
           </div>
           <div className="ml-auto flex items-center gap-2">
             <span className="mr-2 hidden items-center gap-2 font-mono text-[10.5px] uppercase tracking-label text-muted xl:flex">
@@ -154,9 +158,11 @@ export default function Workspace(props: WorkspaceProps) {
         </nav>
       </header>
 
-      <main className="scroll-quiet min-h-0 flex-1 overflow-y-auto">
+      {/* Focusable so keyboard users can scroll views that contain no controls. */}
+      <main id="content" tabIndex={0} aria-label={tabs.find((t) => t.id === tab)?.label} className="scroll-quiet min-h-0 flex-1 overflow-y-auto">
         {tab === 'sanitize' && (
           <div className="flex flex-col lg:h-full">
+            <h1 className="sr-only">Sanitize {fileName || 'a document'}</h1>
             {/* Toolbar */}
             <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-2 border-b border-rule bg-paper px-3 py-2 sm:px-4">
               <div className="flex flex-wrap items-center gap-0.5">
@@ -172,7 +178,7 @@ export default function Workspace(props: WorkspaceProps) {
                 <button onClick={onLoadCsvSample} className="btn-quiet">
                   <Table2 className="h-3.5 w-3.5" /> Sample CSV
                 </button>
-                <button onClick={onClearDoc} disabled={!docText} className="btn-quiet hover:text-signal">
+                <button onClick={onClearDoc} disabled={!docText} className="btn-quiet hover:text-signal-ink">
                   <Eraser className="h-3.5 w-3.5" /> Clear
                 </button>
               </div>
