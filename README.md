@@ -53,10 +53,10 @@ The design follows a "declassified document" idea: warm paper, ink-black redacti
 | Tab | What it does |
 |---|---|
 | **Sanitize** | Overlay editor with line numbers and per-type highlights. Open, paste, drag and drop, sample record, sample CSV, clear. Click a highlighted value (or a row in the findings panel) to inspect it; the inspector shows position, check result, replacement and alias, with previous/next navigation. After the first scan, findings update **live as you type**. Scan with the button or **Ctrl/Cmd + Enter**. |
-| **Compare** | Original and sanitized text side by side or stacked, scrolled together, with mode switching, copy and download. |
+| **Audit & Export** | Live side-by-side diff: the editable original on the left, the sanitized output on the right, kept line-for-line and scrolled together. Changed lines are marked `−` / `+`, with removed and inserted values highlighted. Above it: detection counts (total, by type, rejected, lines changed). Click a type to include or exclude it. Switch modes, copy, or **download the sanitized file in one click**. |
 | **Aliases** | Every distinct value with its alias, masked source, use count and lines. Search, filter by type, copy, rebuild. |
 | **Analysis** | Values found, rejected, pass rate, characters hidden, share of document, scan time, by-type bars, validation ring, a line map of where values appear, and output length per mode. |
-| **Audit** | Newest-first session log (counts, modes and timings only) with `.txt` / `.json` export and a clear-session action. |
+| **Session log** | Newest-first session log (counts, modes and timings only) with `.txt` / `.json` export and a clear-session action. |
 | **Privacy** | The processing path, live session state (document size, alias count, scans, exports, storage used) and steps to verify it yourself in DevTools. |
 
 Exports are named after the source file (`customer-record-sample-sanitized.txt`). CSV exports are sanitized cell by cell, so quoting and structure are preserved.
@@ -109,7 +109,7 @@ src/
 │   ├── Workspace.tsx     # Top bar, tabs, Sanitize toolbar and view routing
 │   ├── Editor.tsx        # Highlight overlay editor + inspector
 │   ├── FindingsPanel.tsx # Summary, type filters, values, rejected list
-│   ├── CompareStudio.tsx
+│   ├── AuditExport.tsx   # Live diff, detection counts, one-click export
 │   ├── PseudonymStudio.tsx
 │   ├── Analytics.tsx
 │   ├── AuditCenter.tsx
@@ -128,7 +128,7 @@ src/
 npm test
 ```
 
-17 tests cover the Luhn check, all six detectors, rejection of invalid candidates, IPv4 range checks, ignoring ordinary numbers, disabled types, card-versus-Aadhaar overlap, partial-mask safety, pseudonym consistency, regenerating modes from the original, CSV quoting round-trips, CSV alias consistency across rows, reuse of document-level aliases in CSV export, and the full sample record (9 values found, 1 rejected).
+19 tests cover the Luhn check, all six detectors, rejection of invalid candidates, IPv4 range checks, ignoring ordinary numbers, disabled types, card-versus-Aadhaar overlap, partial-mask safety, pseudonym consistency, regenerating modes from the original, CSV quoting round-trips, CSV alias consistency across rows, reuse of document-level aliases in CSV export, values never running across a line break, and the full sample record (9 values found, 1 rejected).
 
 ---
 

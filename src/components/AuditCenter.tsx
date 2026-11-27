@@ -20,7 +20,7 @@ export default function AuditCenter({ events, onExport, onClearSession, onGoSani
   return (
     <div className="flex flex-col gap-6">
       <ViewHeader
-        index="05 — Audit"
+        index="05 — Session log"
         title="Session log"
         desc="Every action in this session, newest first. Entries hold counts, modes and timings — never the values themselves."
         actions={

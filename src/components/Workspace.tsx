@@ -1,18 +1,18 @@
 import { useRef } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowLeft, ClipboardPaste, Copy, Download, Eraser, FileText, FileUp, Loader2, ScanLine, Table2 } from 'lucide-react';
+import { ArrowLeft, ClipboardPaste, Download, Eraser, FileText, FileUp, Loader2, ScanLine, Table2 } from 'lucide-react';
 import Editor from './Editor';
 import FindingsPanel from './FindingsPanel';
-import CompareStudio from './CompareStudio';
+import AuditExport from './AuditExport';
 import PseudonymStudio from './PseudonymStudio';
 import Analytics from './Analytics';
 import AuditCenter from './AuditCenter';
 import PrivacyCenter from './PrivacyCenter';
-import { EmptyState, Logo, MODE_LABEL, Segmented, ViewHeader } from './ui';
+import { EmptyState, Logo, Segmented, ViewHeader } from './ui';
 import type { Category, DetectionResult, Entity, RedactionMode, Segment } from '../lib/pii';
 import type { AuditEvent } from '../lib/audit';
 
-export type WorkspaceTab = 'sanitize' | 'compare' | 'aliases' | 'analysis' | 'audit' | 'privacy';
+export type WorkspaceTab = 'sanitize' | 'export' | 'aliases' | 'analysis' | 'audit' | 'privacy';
 
 interface WorkspaceProps {
   tab: WorkspaceTab;
@@ -49,8 +49,7 @@ interface WorkspaceProps {
   onResetMapping: () => void;
   onExportAudit: (format: 'txt' | 'json') => void;
   onClearSession: () => void;
-  compareLayout: 'side' | 'stacked';
-  onCompareLayoutChange: (l: 'side' | 'stacked') => void;
+  liveLimit: number;
   audit: AuditEvent[];
   onBackHome: () => void;
   onPaste: () => void;
@@ -68,7 +67,7 @@ export default function Workspace(props: WorkspaceProps) {
     tab, onTabChange, docText, fileName, fileKind, mode, onModeChange, result, stale, scanning, onScan,
     selected, selectedIndex, onSelectEntity, onCloseDetail, onPrev, onNext, hasPrev, hasNext, pseudonymMap,
     segments, onTextChange, onFile, onLoadSample, onLoadCsvSample, onClearDoc, onExport, onCopySanitized,
-    onCopyAlias, onResetMapping, onExportAudit, onClearSession, compareLayout, onCompareLayoutChange, audit,
+    onCopyAlias, onResetMapping, onExportAudit, onClearSession, liveLimit, audit,
     onBackHome, onPaste, enabledCats, onToggleCategory,
   } = props;
 
@@ -79,10 +78,10 @@ export default function Workspace(props: WorkspaceProps) {
 
   const tabs: { id: WorkspaceTab; label: string; count?: number }[] = [
     { id: 'sanitize', label: 'Sanitize', count: result ? entities.length : undefined },
-    { id: 'compare', label: 'Compare' },
+    { id: 'export', label: 'Audit & Export' },
     { id: 'aliases', label: 'Aliases', count: result ? aliasCount : undefined },
     { id: 'analysis', label: 'Analysis' },
-    { id: 'audit', label: 'Audit', count: audit.length || undefined },
+    { id: 'audit', label: 'Session log', count: audit.length || undefined },
     { id: 'privacy', label: 'Privacy' },
   ];
 
@@ -227,44 +226,48 @@ export default function Workspace(props: WorkspaceProps) {
           </div>
         )}
 
-        {tab === 'compare' && (
-          <div className="flex flex-col gap-5 p-4 sm:p-6 lg:h-full lg:p-8">
+        {tab === 'export' && (
+          <div className="flex flex-col gap-5 p-4 sm:p-6 lg:h-full lg:min-h-[640px] lg:px-8 lg:py-6">
             <ViewHeader
-              index="02 — Compare"
-              title="Before and after"
-              desc="The original and the sanitized output, scrolled together. Switch modes here to see each version."
+              index="02 — Audit & Export"
+              title="Review the diff, then export"
+              desc={
+                docText
+                  ? 'Edit the original and the sanitized version, the counts and the export update as you type.'
+                  : 'Line-by-line diff of the original and sanitized text, detection counts by type, and a one-click download.'
+              }
               actions={
-                result ? (
-                  <>
-                    <Segmented label="Redaction mode" size="sm" value={mode} options={MODE_OPTIONS} onChange={onModeChange} />
-                    <Segmented
-                      label="Layout"
-                      size="sm"
-                      value={compareLayout}
-                      options={[
-                        { value: 'side', label: 'Side by side' },
-                        { value: 'stacked', label: 'Stacked' },
-                      ]}
-                      onChange={onCompareLayoutChange}
-                    />
-                    <button onClick={onCopySanitized} className="btn-line py-2">
-                      <Copy className="h-3.5 w-3.5" /> Copy
-                    </button>
-                    <button onClick={onExport} className="btn-ink py-2">
-                      <Download className="h-3.5 w-3.5" /> Download
-                    </button>
-                  </>
-                ) : undefined
+                docText ? <Segmented label="Redaction mode" size="sm" value={mode} options={MODE_OPTIONS} onChange={onModeChange} /> : undefined
               }
             />
-            {result ? (
-              <CompareStudio original={docText} segments={segments} entities={entities} mode={mode} layout={compareLayout} />
+            {docText ? (
+              <AuditExport
+                docText={docText}
+                fileName={fileName}
+                fileKind={fileKind}
+                mode={mode}
+                result={result}
+                entities={entities}
+                segments={segments}
+                enabledCats={enabledCats}
+                onToggleCategory={onToggleCategory}
+                onTextChange={onTextChange}
+                onScan={onScan}
+                scanning={scanning}
+                stale={stale}
+                liveLimit={liveLimit}
+                onExport={onExport}
+                onCopy={onCopySanitized}
+              />
             ) : (
               <EmptyState
-                title="Nothing to compare yet"
-                desc={`Scan a document first. You will see the original and its ${MODE_LABEL[mode].toLowerCase()} version line by line.`}
-                actionLabel="Go to Sanitize"
-                onAction={goSanitize}
+                title="No document yet"
+                desc="Load the sample record here, or open a file or paste text in Sanitize. The diff, counts and download will appear here."
+                actionLabel="Load the sample record"
+                onAction={() => {
+                  onLoadSample();
+                  onTabChange('export');
+                }}
               />
             )}
           </div>

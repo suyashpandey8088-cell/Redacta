@@ -185,8 +185,8 @@ export function detectPII(text: string, enabled: Category[]): DetectionResult {
 
   if (enabledSet.has('PHONE')) {
     const patterns = [
-      /\+[\d\s-]{8,16}\d/g,
-      /\b[6-9]\d{4}[\s-]\d{5}\b/g,
+      /\+[\d \t-]{8,16}\d/g,
+      /\b[6-9]\d{4}[ \t-]\d{5}\b/g,
       /\b[6-9]\d{9}\b/g,
       /\b\d{3}[- ]\d{3}[- ]\d{4}\b/g,
     ];
@@ -227,7 +227,7 @@ export function detectPII(text: string, enabled: Category[]): DetectionResult {
      * Lookarounds prevent matching the first/last three groups of a
      * 16-digit card run (e.g. an invalid card must not surface as Aadhaar).
      */
-    const re = /(?<!\d{4}[ -])\b[2-9]\d{3}[\s-]?\d{4}[\s-]?\d{4}\b(?![ -]\d{4}\b)/g;
+    const re = /(?<!\d{4}[ -])\b[2-9]\d{3}[ \t-]?\d{4}[ \t-]?\d{4}\b(?![ -]\d{4}\b)/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(text)) !== null) {
       const digits = m[0].replace(/\D/g, '');
