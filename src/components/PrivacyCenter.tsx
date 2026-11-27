@@ -42,7 +42,7 @@ export default function PrivacyCenter({ events, docLength, aliasCount }: Privacy
       <ViewHeader
         index="06 — Privacy"
         title="How your data moves"
-        desc="VEIL is a static page. Below is the full path a document takes, and the state this session currently holds."
+        desc="Redacta is a static page. Below is the full path a document takes, and the state this session currently holds."
       />
 
       <div className="grid gap-10 lg:grid-cols-[1.15fr_1fr]">
@@ -110,7 +110,7 @@ export default function PrivacyCenter({ events, docLength, aliasCount }: Privacy
           ))}
         </ol>
         <p className="mt-6 border-t border-rule pt-4 text-[12px] leading-relaxed text-muted">
-          VEIL makes no claims of third-party certification or external security audits.
+          Redacta makes no claims of third-party certification or external security audits.
         </p>
       </section>
     </div>

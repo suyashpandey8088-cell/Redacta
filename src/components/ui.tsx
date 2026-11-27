@@ -11,12 +11,12 @@ export function Logo({ onClick, tone = 'ink' }: { onClick?: () => void; tone?: '
         <rect x="7" y="10" width="18" height="4" fill={tone === 'ink' ? '#F3F0E8' : '#16150F'} />
         <rect x="7" y="18" width="11" height="4" fill="#D9381E" />
       </svg>
-      <span className={`font-mono text-[15px] font-medium tracking-[0.22em] ${fg}`}>VEIL</span>
+      <span className={`font-mono text-[15px] font-medium tracking-[0.22em] ${fg}`}>REDACTA</span>
     </>
   );
   if (onClick) {
     return (
-      <button onClick={onClick} className="flex items-center gap-2.5 rounded-[3px]" aria-label="VEIL home">
+      <button onClick={onClick} className="flex items-center gap-2.5 rounded-[3px]" aria-label="Redacta home">
         {content}
       </button>
     );

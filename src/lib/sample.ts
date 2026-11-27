@@ -4,7 +4,7 @@
  * consistent pseudonymization), an invalid Luhn candidate (must be
  * rejected), and ordinary numbers that are NOT PII.
  */
-export const SAMPLE_DOCUMENT = `VEIL — Customer Onboarding Record
+export const SAMPLE_DOCUMENT = `Redacta — Customer Onboarding Record
 Synthetic sample for the privacy engine. All values are fictional.
 
 Customer: Aarav Sharma
