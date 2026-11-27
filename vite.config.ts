@@ -1,33 +1,51 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import vercel from './vercel.json' with { type: 'json' };
 
-/**
- * Production Content-Security-Policy. Redacta never needs the network after it
- * loads, so `connect-src 'none'` makes "nothing is uploaded" a guarantee the
- * browser enforces: fetch, XHR, WebSocket and beacons are all blocked, even
- * for injected or third-party code. Only applied to builds — the dev server
- * needs inline scripts and a WebSocket for hot reload.
+/*
+ * Security headers live in vercel.json, the single source of truth. The
+ * production host sends them as HTTP headers, `vite preview` sends the same
+ * set so local checks match production, and the CSP is also embedded as a
+ * <meta> tag so the policy still applies on hosts that send no headers.
+ *
+ * Redacta never needs the network after it loads, so `connect-src 'none'`
+ * makes "nothing is uploaded" a guarantee the browser enforces: fetch, XHR,
+ * WebSocket and beacons are all blocked, even for injected code.
  */
-const CONTENT_SECURITY_POLICY = [
-  "default-src 'none'",
-  "script-src 'self'",
-  "style-src 'self'",
-  "img-src 'self' data:",
-  "font-src 'self'",
-  "connect-src 'none'",
-  "manifest-src 'self'",
-  "base-uri 'none'",
-  "form-action 'none'",
-].join('; ');
+const SECURITY_HEADERS: { key: string; value: string }[] = vercel.headers[0].headers;
+const CONTENT_SECURITY_POLICY = SECURITY_HEADERS.find((h) => h.key === 'Content-Security-Policy')!.value;
+/* frame-ancestors is ignored (and warned about) in <meta>; X-Frame-Options covers it as a header. */
+const META_CSP = CONTENT_SECURITY_POLICY.split('; ')
+  .filter((d) => !d.startsWith('frame-ancestors'))
+  .join('; ');
 
 function securityHeaders(): Plugin {
   return {
-    name: 'redacta-security-meta',
+    name: 'redacta-security',
+    /* Only builds: the dev server needs inline scripts and a WebSocket for hot reload. */
     apply: 'build',
     transformIndexHtml: () => [
-      { tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy', content: CONTENT_SECURITY_POLICY }, injectTo: 'head-prepend' },
+      { tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy', content: META_CSP }, injectTo: 'head-prepend' },
       { tag: 'meta', attrs: { name: 'referrer', content: 'no-referrer' }, injectTo: 'head-prepend' },
     ],
+  };
+}
+
+function previewHeaders(embeddable: boolean): Plugin {
+  const headers = SECURITY_HEADERS
+    /* HSTS is meaningless over plain-HTTP localhost. */
+    .filter((h) => h.key !== 'Strict-Transport-Security')
+    /* Remote preview environments show the app in an iframe, so drop the anti-framing headers there. */
+    .filter((h) => !embeddable || h.key !== 'X-Frame-Options')
+    .map((h) => (embeddable && h.key === 'Content-Security-Policy' ? { ...h, value: META_CSP } : h));
+  return {
+    name: 'redacta-preview-headers',
+    configurePreviewServer(server) {
+      server.middlewares.use((_req, res, next) => {
+        for (const { key, value } of headers) res.setHeader(key, value);
+        next();
+      });
+    },
   };
 }
 
@@ -44,7 +62,9 @@ const server = {
 };
 
 export default defineConfig({
-  plugins: [react(), securityHeaders()],
+  plugins: [react(), securityHeaders(), previewHeaders(expose)],
   server,
   preview: server,
+  worker: { format: 'es' },
+  build: { target: 'es2022' },
 });

@@ -20,12 +20,12 @@ export const CATEGORY_META: Record<
   Category,
   { label: string; prefix: string; color: string; softBg: string; underline: string }
 > = {
-  EMAIL: { label: 'Email', prefix: 'USER', color: '#2952CC', softBg: 'rgba(41,82,204,0.12)', underline: '#2952CC' },
-  PHONE: { label: 'Phone', prefix: 'PHONE', color: '#6E3FC9', softBg: 'rgba(110,63,201,0.12)', underline: '#6E3FC9' },
-  IP: { label: 'IP Address', prefix: 'IP', color: '#0B7A70', softBg: 'rgba(11,122,112,0.13)', underline: '#0B7A70' },
-  PAN: { label: 'PAN', prefix: 'PAN', color: '#A86A12', softBg: 'rgba(168,106,18,0.14)', underline: '#A86A12' },
-  AADHAAR: { label: 'Aadhaar', prefix: 'AADHAAR', color: '#B4235A', softBg: 'rgba(180,35,90,0.12)', underline: '#B4235A' },
-  CARD: { label: 'Credit Card', prefix: 'CARD', color: '#C2410C', softBg: 'rgba(194,65,12,0.12)', underline: '#C2410C' },
+  EMAIL: { label: 'Email', prefix: 'USER', color: '#2850C8', softBg: 'rgba(40,80,200,0.12)', underline: '#2850C8' },
+  PHONE: { label: 'Phone', prefix: 'PHONE', color: '#6B3DC3', softBg: 'rgba(107,61,195,0.12)', underline: '#6B3DC3' },
+  IP: { label: 'IP Address', prefix: 'IP', color: '#09655D', softBg: 'rgba(9,101,93,0.13)', underline: '#09655D' },
+  PAN: { label: 'PAN', prefix: 'PAN', color: '#7E4F0D', softBg: 'rgba(126,79,13,0.14)', underline: '#7E4F0D' },
+  AADHAAR: { label: 'Aadhaar', prefix: 'AADHAAR', color: '#A72154', softBg: 'rgba(167,33,84,0.12)', underline: '#A72154' },
+  CARD: { label: 'Credit Card', prefix: 'CARD', color: '#A1360A', softBg: 'rgba(161,54,10,0.12)', underline: '#A1360A' },
 };
 
 export interface Entity {
@@ -133,14 +133,20 @@ function validateIPv6(value: string): boolean {
   return groups.every((g) => /^[0-9a-f]{1,4}$/.test(g));
 }
 
+/** Offset of the first character of every line (line i starts at `result[i]`). */
+export function lineStarts(text: string): number[] {
+  const starts = [0];
+  for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
+  return starts;
+}
+
 /**
  * Maps character offsets to 1-based line/column numbers. The text is walked
  * once; each lookup is a binary search, so locating k findings costs
  * O(n + k log n) instead of re-scanning the text for every finding.
  */
 export function createLineIndex(text: string): (offset: number) => { line: number; column: number } {
-  const starts = [0];
-  for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
+  const starts = lineStarts(text);
   return (offset) => {
     let lo = 0;
     let hi = starts.length - 1;
@@ -610,12 +616,28 @@ export function parseCSV(text: string): string[][] {
   return rows;
 }
 
-export function serializeCSV(rows: string[][]): string {
+/** Leading characters that make Excel, Sheets and LibreOffice evaluate a cell as a formula. */
+const FORMULA_START = /^[=+\-@\t\r]/;
+/** Plain signed numbers are left as they are, so negative values stay numeric. */
+const PLAIN_NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+
+/**
+ * Neutralize CSV formula injection (OWASP "CSV Injection"): a cell that a
+ * spreadsheet would run as a formula gets a leading apostrophe, which every
+ * major spreadsheet treats as "show this as text".
+ */
+export function guardFormula(cell: string): string {
+  return FORMULA_START.test(cell) && !PLAIN_NUMBER.test(cell) ? `'${cell}` : cell;
+}
+
+export function serializeCSV(rows: string[][], options: { guardFormulas?: boolean } = {}): string {
+  const guard = options.guardFormulas ?? false;
   return rows
     .map((row) =>
       row
-        .map((cell) => {
-          if (/[",\n]/.test(cell)) {
+        .map((raw) => {
+          const cell = guard ? guardFormula(raw) : raw;
+          if (/[",\n\r]/.test(cell)) {
             return `"${cell.replace(/"/g, '""')}"`;
           }
           return cell;
@@ -630,6 +652,7 @@ export function serializeCSV(rows: string[][]): string {
  * One alias map is shared across every cell, so the same value receives
  * the same alias in every row. Pass `baseMap` (built from the whole
  * document) to keep aliases identical to the on-screen preview.
+ * Cells a spreadsheet would run as formulas are neutralized on the way out.
  * Returns the sanitized CSV plus the total number of entities found.
  */
 export function sanitizeCSV(
@@ -662,5 +685,5 @@ export function sanitizeCSV(
       return sanitizeText(cell, res.entities, mode, map);
     }),
   );
-  return { output: serializeCSV(sanitized), entityCount };
+  return { output: serializeCSV(sanitized, { guardFormulas: true }), entityCount };
 }

@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import Landing from './components/Landing';
-import Workspace, { type WorkspaceTab } from './components/Workspace';
+import type { WorkspaceTab } from './components/Workspace';
 import {
   buildPseudonymMap,
   detectPII,
@@ -16,10 +16,18 @@ import {
 } from './lib/pii';
 import { SAMPLE_CSV, SAMPLE_CSV_FILENAME, SAMPLE_DOCUMENT, SAMPLE_FILENAME } from './lib/sample';
 import { exportAudit, makeEvent, type AuditEvent } from './lib/audit';
+import { useToast } from './hooks/useToast';
+import { useScanner } from './hooks/useScanner';
 import { MAX_DOCUMENT_BYTES, copyText, downloadText, exportFileName, formatBytes, readTextFile, type FileKind } from './lib/files';
+
+/* The workspace ships as its own chunk so the landing page loads less JavaScript. */
+const loadWorkspace = () => import('./components/Workspace');
+const Workspace = lazy(loadWorkspace);
 
 /** Documents up to this size are re-scanned on every edit after the first scan. */
 const LIVE_SCAN_LIMIT = 60_000;
+
+const foundMessage = (count: number, where = '') => `${count.toLocaleString()} value${count === 1 ? '' : 's'} found${where}`;
 
 export default function App() {
   const [view, setView] = useState<'home' | 'app'>('home');
@@ -36,25 +44,21 @@ export default function App() {
   const [scanning, setScanning] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [audit, setAudit] = useState<AuditEvent[]>([]);
-  const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
-  const toastTimer = useRef<number | null>(null);
-  const scanTimer = useRef<number | null>(null);
+  const { toast, showToast } = useToast();
+  const scanner = useScanner();
   /** True once the current document has been scanned; enables live re-scanning on edit. */
   const live = useRef(false);
 
-  const showToast = useCallback((message: string) => {
-    if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    setToast({ id: Date.now(), message });
-    toastTimer.current = window.setTimeout(() => setToast(null), 3000);
+  /* Fetch the workspace chunk once the landing page is idle, so opening it is instant. */
+  useEffect(() => {
+    const prefetch = () => void loadWorkspace();
+    if ('requestIdleCallback' in window) {
+      const id = window.requestIdleCallback(prefetch, { timeout: 2500 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = setTimeout(prefetch, 1500);
+    return () => clearTimeout(id);
   }, []);
-
-  useEffect(
-    () => () => {
-      if (toastTimer.current) window.clearTimeout(toastTimer.current);
-      if (scanTimer.current) window.clearTimeout(scanTimer.current);
-    },
-    [],
-  );
 
   /* Each view starts at the top of the page. */
   useEffect(() => {
@@ -77,10 +81,26 @@ export default function App() {
   const selected = useMemo(() => entities.find((e) => e.id === selectedId) ?? null, [entities, selectedId]);
   const selectedIndex = selected ? entities.findIndex((e) => e.id === selected.id) : -1;
 
+  /**
+   * Scans `text` (large documents in a worker) and applies the result.
+   * Resolves to `null` when a newer scan or an edit superseded this one.
+   */
   const applyScan = useCallback(
-    (text: string, cats: Category[], kind: FileKind) => {
+    async (text: string, cats: Category[], kind: FileKind): Promise<DetectionResult | null> => {
       logAudit('Scan started', 'info', `${kind.toUpperCase()} · ${text.length} chars · ${cats.length} categories`);
-      const res = detectPII(text, cats);
+      setScanning(true);
+      let res: DetectionResult | null;
+      try {
+        res = await scanner.scan(text, cats);
+      } catch {
+        setScanning(false);
+        logAudit('Scan failed', 'warning', 'Detection stopped before finishing');
+        showToast('The scan could not finish. Try again.');
+        return null;
+      }
+      /* A superseded scan leaves state to whichever scan or edit replaced it. */
+      if (!res) return null;
+      setScanning(false);
       setResult(res);
       setStale(false);
       setSelectedId(null);
@@ -89,7 +109,7 @@ export default function App() {
       logAudit('Validation completed', 'success', `${res.rejected.length} candidates rejected`);
       return res;
     },
-    [logAudit],
+    [logAudit, scanner, showToast],
   );
 
   /* Import a document from any source and scan it immediately. */
@@ -100,9 +120,12 @@ export default function App() {
       setFileKind(kind);
       setView('app');
       setTab('sanitize');
+      setResult(null);
+      setStale(false);
+      setSelectedId(null);
+      live.current = false;
       logAudit('Document imported', 'info', `${kind.toUpperCase()} · ${text.length} chars · ${source}`);
-      const res = applyScan(text, enabledCats, kind);
-      showToast(`${res.entities.length} value${res.entities.length === 1 ? '' : 's'} found in ${name}`);
+      void applyScan(text, enabledCats, kind).then((res) => res && showToast(foundMessage(res.entities.length, ` in ${name}`)));
     },
     [applyScan, enabledCats, logAudit, showToast],
   );
@@ -133,17 +156,14 @@ export default function App() {
       return;
     }
     if (scanning) return;
-    setScanning(true);
-    /* Brief pause so the sweep is visible; detection itself is synchronous and local. */
-    scanTimer.current = window.setTimeout(() => {
-      const res = applyScan(docText, enabledCats, fileKind);
-      setScanning(false);
-      showToast(`${res.entities.length} value${res.entities.length === 1 ? '' : 's'} found`);
-    }, 420);
+    void applyScan(docText, enabledCats, fileKind).then((res) => res && showToast(foundMessage(res.entities.length)));
   }, [applyScan, docText, enabledCats, fileKind, scanning, showToast]);
 
   const handleTextChange = useCallback(
     (text: string) => {
+      /* Results of a scan still running were computed for the previous text. */
+      scanner.cancel();
+      setScanning(false);
       setDocText(text);
       setSelectedId(null);
       if (!text) {
@@ -162,7 +182,7 @@ export default function App() {
         setStale(live.current);
       }
     },
-    [enabledCats],
+    [enabledCats, scanner],
   );
 
   const handleModeChange = useCallback(
@@ -179,12 +199,18 @@ export default function App() {
       const next = enabledCats.includes(c) ? enabledCats.filter((x) => x !== c) : [...enabledCats, c];
       setEnabledCats(next);
       if (result) {
-        setResult(detectPII(docText, next));
-        setSelectedId(null);
+        void scanner.scan(docText, next).then(
+          (res) => {
+            if (!res) return;
+            setResult(res);
+            setSelectedId(null);
+          },
+          () => showToast('The scan could not finish. Try again.'),
+        );
       }
       logAudit('Category filter updated', 'info', `${c} ${next.includes(c) ? 'enabled' : 'disabled'}`);
     },
-    [docText, enabledCats, logAudit, result],
+    [docText, enabledCats, logAudit, result, scanner, showToast],
   );
 
   const exportSanitized = useCallback(() => {
@@ -226,12 +252,17 @@ export default function App() {
       showToast('No document loaded');
       return;
     }
-    const res = detectPII(docText, enabledCats);
-    setResult(res);
-    setSelectedId(null);
-    logAudit('Pseudonym mapping rebuilt', 'info', `${buildPseudonymMap(res.entities).size} aliases`);
-    showToast('Aliases rebuilt from the current text');
-  }, [docText, enabledCats, logAudit, showToast]);
+    void scanner.scan(docText, enabledCats).then(
+      (res) => {
+        if (!res) return;
+        setResult(res);
+        setSelectedId(null);
+        logAudit('Pseudonym mapping rebuilt', 'info', `${buildPseudonymMap(res.entities).size} aliases`);
+        showToast('Aliases rebuilt from the current text');
+      },
+      () => showToast('The scan could not finish. Try again.'),
+    );
+  }, [docText, enabledCats, logAudit, scanner, showToast]);
 
   const exportAuditReport = useCallback(
     (format: 'txt' | 'json') => {
@@ -244,7 +275,7 @@ export default function App() {
   );
 
   const resetDocument = useCallback(() => {
-    if (scanTimer.current) window.clearTimeout(scanTimer.current);
+    scanner.cancel();
     setScanning(false);
     setDocText('');
     setFileName('');
@@ -253,7 +284,7 @@ export default function App() {
     setStale(false);
     setSelectedId(null);
     live.current = false;
-  }, []);
+  }, [scanner]);
 
   const clearSession = useCallback(() => {
     resetDocument();
@@ -318,46 +349,48 @@ export default function App() {
           onLoadSample={loadSample}
         />
       ) : (
-        <Workspace
-          tab={tab}
-          onTabChange={setTab}
-          docText={docText}
-          fileName={fileName}
-          fileKind={fileKind}
-          mode={mode}
-          onModeChange={handleModeChange}
-          enabledCats={enabledCats}
-          onToggleCategory={handleToggleCategory}
-          result={result}
-          stale={stale}
-          scanning={scanning}
-          onScan={runScan}
-          selected={selected}
-          selectedIndex={selectedIndex}
-          onSelectEntity={setSelectedId}
-          onCloseDetail={() => setSelectedId(null)}
-          onPrev={() => stepEntity(-1)}
-          onNext={() => stepEntity(1)}
-          hasPrev={selectedIndex > 0}
-          hasNext={selectedIndex >= 0 && selectedIndex < entities.length - 1}
-          pseudonymMap={pseudonymMap}
-          segments={segments}
-          onTextChange={handleTextChange}
-          onFile={handleFile}
-          onLoadSample={loadSample}
-          onLoadCsvSample={loadCsvSample}
-          onClearDoc={clearDoc}
-          onExport={exportSanitized}
-          onCopySanitized={copySanitized}
-          onCopyAlias={copyAlias}
-          onResetMapping={rebuildAliases}
-          onExportAudit={exportAuditReport}
-          onClearSession={clearSession}
-          liveLimit={LIVE_SCAN_LIMIT}
-          audit={audit}
-          onBackHome={() => setView('home')}
-          onPaste={pasteFromClipboard}
-        />
+        <Suspense fallback={<div className="min-h-screen" aria-busy="true" />}>
+          <Workspace
+            tab={tab}
+            onTabChange={setTab}
+            docText={docText}
+            fileName={fileName}
+            fileKind={fileKind}
+            mode={mode}
+            onModeChange={handleModeChange}
+            enabledCats={enabledCats}
+            onToggleCategory={handleToggleCategory}
+            result={result}
+            stale={stale}
+            scanning={scanning}
+            onScan={runScan}
+            selected={selected}
+            selectedIndex={selectedIndex}
+            onSelectEntity={setSelectedId}
+            onCloseDetail={() => setSelectedId(null)}
+            onPrev={() => stepEntity(-1)}
+            onNext={() => stepEntity(1)}
+            hasPrev={selectedIndex > 0}
+            hasNext={selectedIndex >= 0 && selectedIndex < entities.length - 1}
+            pseudonymMap={pseudonymMap}
+            segments={segments}
+            onTextChange={handleTextChange}
+            onFile={handleFile}
+            onLoadSample={loadSample}
+            onLoadCsvSample={loadCsvSample}
+            onClearDoc={clearDoc}
+            onExport={exportSanitized}
+            onCopySanitized={copySanitized}
+            onCopyAlias={copyAlias}
+            onResetMapping={rebuildAliases}
+            onExportAudit={exportAuditReport}
+            onClearSession={clearSession}
+            liveLimit={LIVE_SCAN_LIMIT}
+            audit={audit}
+            onBackHome={() => setView('home')}
+            onPaste={pasteFromClipboard}
+          />
+        </Suspense>
       )}
 
       {/* Centering lives on a wrapper so Framer Motion's transform doesn't override it. */}

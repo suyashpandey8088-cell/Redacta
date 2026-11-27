@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
 import { CATEGORY_META, type Category } from '../lib/pii';
 
 /** Wordmark: a solid ink tile with two redaction bars, followed by the name. */
@@ -98,15 +98,35 @@ export function Segmented<T extends string>({
   label: string;
   size?: 'sm' | 'md';
 }) {
+  /* WAI-ARIA radio group: one tab stop; arrow keys, Home and End move and select. */
+  const current = Math.max(0, options.findIndex((o) => o.value === value));
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const keys: Record<string, number> = {
+      ArrowRight: current + 1,
+      ArrowDown: current + 1,
+      ArrowLeft: current - 1,
+      ArrowUp: current - 1,
+      Home: 0,
+      End: options.length - 1,
+    };
+    if (!(e.key in keys)) return;
+    e.preventDefault();
+    const next = (keys[e.key] + options.length) % options.length;
+    onChange(options[next].value);
+    e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus();
+  };
+
   return (
-    <div role="radiogroup" aria-label={label} className="inline-flex rounded-[3px] border border-rule-2 bg-sheet p-[2px]">
-      {options.map((o) => {
+    <div role="radiogroup" aria-label={label} onKeyDown={onKeyDown} className="inline-flex rounded-[3px] border border-rule-2 bg-sheet p-[2px]">
+      {options.map((o, i) => {
         const active = o.value === value;
         return (
           <button
             key={o.value}
+            type="button"
             role="radio"
             aria-checked={active}
+            tabIndex={i === current ? 0 : -1}
             title={o.title}
             onClick={() => onChange(o.value)}
             className={`rounded-[2px] font-medium transition-colors ${size === 'sm' ? 'px-2.5 py-1 text-[12px]' : 'px-3 py-1.5 text-[12.5px]'} ${

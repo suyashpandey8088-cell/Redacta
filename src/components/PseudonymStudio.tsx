@@ -12,6 +12,15 @@ interface PseudonymStudioProps {
   onGoSanitize: () => void;
 }
 
+const PAGE_SIZE = 200;
+const MAX_LINES_LISTED = 12;
+
+/** "3, 8, 14" — or the first few plus a count for values repeated across many lines. */
+function formatLines(lines: number[]): string {
+  if (lines.length <= MAX_LINES_LISTED) return lines.join(', ');
+  return `${lines.slice(0, MAX_LINES_LISTED).join(', ')} +${(lines.length - MAX_LINES_LISTED).toLocaleString()} more`;
+}
+
 export default function PseudonymStudio({ entities, pseudonymMap, hasResult, onCopyAlias, onReset, onGoSanitize }: PseudonymStudioProps) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<Category | 'ALL'>('ALL');
@@ -24,7 +33,8 @@ export default function PseudonymStudio({ entities, pseudonymMap, hasResult, onC
       const existing = byKey.get(key);
       if (existing) {
         existing.count += 1;
-        if (!existing.lines.includes(e.line)) existing.lines.push(e.line);
+        /* Entities are in document order, so a repeated line can only be the last one recorded. */
+        if (existing.lines[existing.lines.length - 1] !== e.line) existing.lines.push(e.line);
       } else {
         byKey.set(key, {
           alias: aliasFor(e, pseudonymMap),
@@ -41,13 +51,19 @@ export default function PseudonymStudio({ entities, pseudonymMap, hasResult, onC
   }, [entities, pseudonymMap]);
 
   const q = search.trim().toLowerCase();
-  const visible = rows.filter(
-    (r) =>
-      (filter === 'ALL' || r.category === filter) &&
-      (q === '' || r.alias.toLowerCase().includes(q) || CATEGORY_META[r.category].label.toLowerCase().includes(q)),
+  const visible = useMemo(
+    () =>
+      rows.filter(
+        (r) =>
+          (filter === 'ALL' || r.category === filter) &&
+          (q === '' || r.alias.toLowerCase().includes(q) || CATEGORY_META[r.category].label.toLowerCase().includes(q)),
+      ),
+    [rows, filter, q],
   );
-  const presentCats = CATEGORIES.filter((c) => rows.some((r) => r.category === c));
-  const repeated = rows.filter((r) => r.count > 1).length;
+  const [limit, setLimit] = useState(PAGE_SIZE);
+  const shown = visible.slice(0, limit);
+  const presentCats = useMemo(() => CATEGORIES.filter((c) => rows.some((r) => r.category === c)), [rows]);
+  const repeated = useMemo(() => rows.filter((r) => r.count > 1).length, [rows]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -114,15 +130,18 @@ export default function PseudonymStudio({ entities, pseudonymMap, hasResult, onC
               <table className="w-full min-w-[640px] text-left">
                 <thead>
                   <tr className="border-b border-rule">
-                    {['Alias', 'Type', 'Masked source', 'Uses', 'Lines', ''].map((h) => (
-                      <th key={h} className="label px-5 py-3 font-medium">
+                    {['Alias', 'Type', 'Masked source', 'Uses', 'Lines'].map((h) => (
+                      <th key={h} scope="col" className="label px-5 py-3 font-medium">
                         {h}
                       </th>
                     ))}
+                    <th scope="col" className="px-5 py-3">
+                      <span className="sr-only">Actions</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {visible.map((r) => (
+                  {shown.map((r) => (
                     <tr key={r.alias} className="border-b border-rule/70 last:border-b-0 hover:bg-paper/60">
                       <td className="px-5 py-3 font-mono text-[13px] font-medium text-ink">{r.alias}</td>
                       <td className="px-5 py-3">
@@ -133,7 +152,7 @@ export default function PseudonymStudio({ entities, pseudonymMap, hasResult, onC
                       </td>
                       <td className="px-5 py-3 font-mono text-[12.5px] text-ink-3">{r.preview}</td>
                       <td className="tabular px-5 py-3 font-mono text-[12.5px] text-ink">{r.count}×</td>
-                      <td className="tabular px-5 py-3 font-mono text-[12.5px] text-ink-3">{r.lines.join(', ')}</td>
+                      <td className="tabular px-5 py-3 font-mono text-[12.5px] text-ink-3">{formatLines(r.lines)}</td>
                       <td className="px-5 py-3 text-right">
                         <button onClick={() => onCopyAlias(r.alias)} className="btn-quiet" aria-label={`Copy ${r.alias}`}>
                           <Copy className="h-3.5 w-3.5" /> Copy
@@ -143,6 +162,17 @@ export default function PseudonymStudio({ entities, pseudonymMap, hasResult, onC
                   ))}
                 </tbody>
               </table>
+            )}
+            {visible.length > shown.length && (
+              <button
+                onClick={() => setLimit((n) => n + PAGE_SIZE)}
+                className="flex w-full items-center justify-center gap-2 border-t border-rule px-5 py-3 text-[13px] font-medium text-ink transition-colors hover:bg-paper/60"
+              >
+                Show {Math.min(PAGE_SIZE, visible.length - shown.length).toLocaleString()} more
+                <span className="font-mono text-[11px] font-normal text-muted">
+                  {shown.length.toLocaleString()} of {visible.length.toLocaleString()}
+                </span>
+              </button>
             )}
           </div>
         </>

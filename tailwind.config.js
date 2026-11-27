@@ -7,9 +7,9 @@ export default {
         paper: { DEFAULT: '#F3F0E8', 2: '#EAE6DC', 3: '#E1DCCF' },
         sheet: '#FBFAF6',
         ink: { DEFAULT: '#16150F', 2: '#3B392F', 3: '#5E5B50' },
-        muted: '#7A766B',
+        muted: '#69655A',
         rule: { DEFAULT: '#D8D3C6', 2: '#C6C0B0' },
-        signal: { DEFAULT: '#D9381E', soft: 'rgba(217,56,30,0.09)' },
+        signal: { DEFAULT: '#D9381E', ink: '#BF3019', soft: 'rgba(217,56,30,0.09)' },
         night: { DEFAULT: '#131210', 2: '#1D1C19', 3: '#2A2924' },
       },
       fontFamily: {

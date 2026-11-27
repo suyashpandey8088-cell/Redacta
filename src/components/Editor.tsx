@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowRight, ChevronLeft, ChevronRight, X } from 'lucide-react';
-import { CATEGORY_META, MODE_LABEL, aliasFor, replacementFor, type Entity, type RedactionMode } from '../lib/pii';
+import { CATEGORIES, CATEGORY_META, MODE_LABEL, aliasFor, replacementFor, type Category, type Entity, type RedactionMode } from '../lib/pii';
 import { Swatch } from './ui';
+import { DocumentTextarea } from './DocumentTextarea';
+import { LINE_HEIGHT, PAD, VirtualGutter, VirtualOverlay, type Mark, type ScrollSync } from './VirtualText';
+import { useTextLayout } from '../hooks/useTextLayout';
 
 interface EditorProps {
   text: string;
@@ -26,8 +29,15 @@ interface EditorProps {
   onLoadSample: () => void;
 }
 
-const LINE_HEIGHT = 22;
-const PAD = 16;
+/* Shared style objects: the virtual text layer skips lines whose marks are unchanged by identity. */
+const SELECTED_STYLE: CSSProperties = { background: '#16150F', color: '#F3F0E8', borderRadius: 1, boxShadow: '0 0 0 2px #16150F' };
+const CATEGORY_STYLE = Object.fromEntries(
+  CATEGORIES.map((c) => [
+    c,
+    { background: CATEGORY_META[c].softBg, borderRadius: 1, boxShadow: `inset 0 -1.5px 0 ${CATEGORY_META[c].color}` },
+  ]),
+) as Record<Category, CSSProperties>;
+
 const CHAR_WIDTH = 7.8; /* IBM Plex Mono at 13px */
 
 export default function Editor({
@@ -52,22 +62,25 @@ export default function Editor({
   onLoadSample,
 }: EditorProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const preRef = useRef<HTMLPreElement>(null);
-  const gutterRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<ScrollSync>(null);
+  const gutterRef = useRef<ScrollSync>(null);
   const [dragging, setDragging] = useState(false);
 
-  const lineCount = useMemo(() => text.split('\n').length, [text]);
-  const wordCount = useMemo(() => (text.trim() ? text.trim().split(/\s+/).length : 0), [text]);
+  const layout = useTextLayout(text);
+  const lineCount = layout.starts.length;
+  /* Header stats can trail typing by a frame; deferring them keeps keystrokes on large files cheap. */
+  const deferredText = useDeferredValue(text);
+  const wordCount = useMemo(() => countWords(deferredText), [deferredText]);
 
-  const syncScroll = () => {
+  const syncScroll = useCallback(() => {
     const ta = textareaRef.current;
     if (!ta) return;
-    if (preRef.current) {
-      preRef.current.scrollTop = ta.scrollTop;
-      preRef.current.scrollLeft = ta.scrollLeft;
-    }
-    if (gutterRef.current) gutterRef.current.scrollTop = ta.scrollTop;
-  };
+    overlayRef.current?.sync(ta.scrollTop, ta.scrollLeft);
+    gutterRef.current?.sync(ta.scrollTop, 0);
+  }, []);
+
+  /* Replacing the text can clamp the textarea's scroll offset without a scroll event. */
+  useLayoutEffect(syncScroll, [layout, syncScroll]);
 
   /* Bring the selected finding into view. */
   useEffect(() => {
@@ -83,42 +96,25 @@ export default function Editor({
       ta.scrollLeft = Math.max(0, left - 48);
     }
     syncScroll();
-  }, [selected]);
+  }, [selected, syncScroll]);
 
-  const highlighted = useMemo(() => {
-    if (entities.length === 0) return text;
-    const sorted = [...entities].sort((a, b) => a.start - b.start);
-    const nodes: React.ReactNode[] = [];
-    let cursor = 0;
-    sorted.forEach((e, i) => {
-      if (e.start > cursor) nodes.push(<span key={`p-${i}`}>{text.slice(cursor, e.start)}</span>);
-      const meta = CATEGORY_META[e.category];
-      const isSelected = selected?.id === e.id;
-      nodes.push(
-        <span
-          key={e.id}
-          style={
-            isSelected
-              ? { background: '#16150F', color: '#F3F0E8', borderRadius: 1, boxShadow: '0 0 0 2px #16150F' }
-              : { background: meta.softBg, borderRadius: 1, boxShadow: `inset 0 -1.5px 0 ${meta.color}` }
-          }
-        >
-          {text.slice(e.start, e.end)}
-        </span>,
-      );
-      cursor = e.end;
-    });
-    if (cursor < text.length) nodes.push(<span key="tail">{text.slice(cursor)}</span>);
-    return nodes;
-  }, [text, entities, selected]);
+  /* Entities arrive sorted by start; only their styles depend on the selection. */
+  const marks = useMemo<Mark[]>(
+    () =>
+      entities.map((e) => ({
+        start: e.start,
+        end: e.end,
+        style: selected?.id === e.id ? SELECTED_STYLE : CATEGORY_STYLE[e.category],
+      })),
+    [entities, selected],
+  );
 
   /* Clicking inside a highlighted value opens it in the inspector. */
   const handleClick = () => {
     const ta = textareaRef.current;
     if (!ta || entities.length === 0) return;
     if (ta.selectionStart !== ta.selectionEnd) return;
-    const pos = ta.selectionStart;
-    const hit = entities.find((e) => pos >= e.start && pos <= e.end);
+    const hit = entityAt(entities, ta.selectionStart);
     if (hit) onSelectEntity(hit.id);
   };
 
@@ -151,38 +147,15 @@ export default function Editor({
 
       <div className="relative flex min-h-0 flex-1">
         {/* Line numbers */}
-        <div
-          ref={gutterRef}
-          className="w-12 shrink-0 select-none overflow-hidden border-r border-rule/70 bg-paper/50 text-right"
-          style={{ paddingTop: PAD, paddingBottom: PAD }}
-          aria-hidden="true"
-        >
-          {Array.from({ length: lineCount }, (_, i) => (
-            <div
-              key={i}
-              className={`pr-3 font-mono text-[11px] ${selected && selected.line === i + 1 ? 'text-ink' : 'text-rule-2'}`}
-              style={{ height: LINE_HEIGHT, lineHeight: `${LINE_HEIGHT}px` }}
-            >
-              {i + 1}
-            </div>
-          ))}
-        </div>
+        <VirtualGutter ref={gutterRef} lineCount={lineCount} activeLine={selected?.line} className="w-12" />
 
         {/* Highlight layer + transparent textarea */}
         <div className="relative min-w-0 flex-1">
-          <pre
-            ref={preRef}
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre font-mono text-[13px] text-ink"
-            style={{ lineHeight: `${LINE_HEIGHT}px`, padding: PAD }}
-          >
-            {highlighted}
-            {'\n'}
-          </pre>
-          <textarea
+          <VirtualOverlay ref={overlayRef} layout={layout} marks={marks} />
+          <DocumentTextarea
             ref={textareaRef}
             value={text}
-            onChange={(e) => onChange(e.target.value)}
+            onValueChange={onChange}
             onScroll={syncScroll}
             onClick={handleClick}
             onKeyDown={(e) => {
@@ -326,4 +299,39 @@ export default function Editor({
       </AnimatePresence>
     </div>
   );
+}
+
+/** Same set as the regex `\s`. */
+function isSpace(c: number): boolean {
+  return (
+    c === 32 || (c >= 9 && c <= 13) || c === 0xa0 || c === 0x1680 || (c >= 0x2000 && c <= 0x200a) ||
+    c === 0x2028 || c === 0x2029 || c === 0x202f || c === 0x205f || c === 0x3000 || c === 0xfeff
+  );
+}
+
+/** Word count without allocating an array of every word. */
+function countWords(text: string): number {
+  let count = 0;
+  let inWord = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    const space = isSpace(c);
+    if (!space && !inWord) count++;
+    inWord = !space;
+  }
+  return count;
+}
+
+/** The entity containing `pos` (inclusive of its end), found by binary search over start-sorted entities. */
+function entityAt(entities: Entity[], pos: number): Entity | undefined {
+  let lo = 0;
+  let hi = entities.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const e = entities[mid];
+    if (pos < e.start) hi = mid - 1;
+    else if (pos > e.end) lo = mid + 1;
+    else return e;
+  }
+  return undefined;
 }
