@@ -162,3 +162,22 @@ describe('CSV', () => {
     expect(output).toBe('name,email\nPriya,USER_01\nAarav,USER_02');
   });
 });
+
+describe('line boundaries', () => {
+  it('never lets a value run onto the next line', () => {
+    const text = 'Call +91 98765 43210\n12 items\nid 2345\n6789\n0123 end\nm 98765\n43210';
+    const entities = detectPII(text, ALL).entities;
+    for (const e of entities) expect(text.slice(e.start, e.end)).not.toContain('\n');
+    expect(entities.map((e) => text.slice(e.start, e.end))).toEqual(['+91 98765 43210']);
+  });
+
+  it('keeps the sanitized output line-for-line with the original', () => {
+    const text = 'Phone: +91 98765 43210\n2024 total\nAadhaar 2345 6789 0123\nend';
+    for (const mode of ['FULL', 'PARTIAL', 'PSEUDONYM'] as const) {
+      const { entities } = detectPII(text, ALL);
+      const out = sanitizeText(text, entities, mode, buildPseudonymMap(entities));
+      expect(out.split('\n')).toHaveLength(4);
+      expect(out.split('\n')[1]).toBe('2024 total');
+    }
+  });
+});

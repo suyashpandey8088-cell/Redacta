@@ -61,7 +61,6 @@ export default function App() {
   const [scanning, setScanning] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [audit, setAudit] = useState<AuditEvent[]>([]);
-  const [compareLayout, setCompareLayout] = useState<'side' | 'stacked'>('side');
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
   const toastTimer = useRef<number | null>(null);
   const scanTimer = useRef<number | null>(null);
@@ -329,7 +328,8 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
-        setTab('sanitize');
+        /* The Audit & Export view has its own editor; everywhere else, scanning happens in Sanitize. */
+        setTab((t) => (t === 'export' ? t : 'sanitize'));
         runScan();
       }
     };
@@ -383,8 +383,7 @@ export default function App() {
           onResetMapping={rebuildAliases}
           onExportAudit={exportAuditReport}
           onClearSession={clearSession}
-          compareLayout={compareLayout}
-          onCompareLayoutChange={setCompareLayout}
+          liveLimit={LIVE_SCAN_LIMIT}
           audit={audit}
           onBackHome={() => setView('home')}
           onPaste={pasteFromClipboard}
