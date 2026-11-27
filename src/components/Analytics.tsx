@@ -1,5 +1,5 @@
+import { useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { BarChart3 } from 'lucide-react';
 import {
   CATEGORIES,
   CATEGORY_META,
@@ -8,170 +8,219 @@ import {
   type Entity,
   type RedactionMode,
 } from '../lib/pii';
+import { EmptyState, MODE_LABEL, Swatch, ViewHeader } from './ui';
 
 interface AnalyticsProps {
   result: DetectionResult | null;
   docText: string;
   entities: Entity[];
   pseudonymMap: Map<string, string>;
+  mode: RedactionMode;
+  onGoSanitize: () => void;
 }
 
-const MODE_ROWS: { mode: RedactionMode; label: string }[] = [
-  { mode: 'FULL', label: 'Full Mask' },
-  { mode: 'PARTIAL', label: 'Partial Mask' },
-  { mode: 'PSEUDONYM', label: 'Pseudonymization' },
-];
+const MODES: RedactionMode[] = ['FULL', 'PARTIAL', 'PSEUDONYM'];
+const MAX_MAP_CELLS = 240;
 
-export default function Analytics({ result, docText, entities, pseudonymMap }: AnalyticsProps) {
+export default function Analytics({ result, docText, entities, pseudonymMap, mode, onGoSanitize }: AnalyticsProps) {
+  const lineCount = useMemo(() => docText.split('\n').length, [docText]);
+
+  const lineMap = useMemo(() => {
+    const cells = Math.min(lineCount, MAX_MAP_CELLS);
+    const perCell = lineCount / cells;
+    const out: { count: number; category: Entity['category'] | null; from: number; to: number }[] = Array.from({ length: cells }, (_, i) => ({
+      count: 0,
+      category: null,
+      from: Math.floor(i * perCell) + 1,
+      to: Math.max(Math.floor(i * perCell) + 1, Math.floor((i + 1) * perCell)),
+    }));
+    for (const e of entities) {
+      const idx = Math.min(cells - 1, Math.floor((e.line - 1) / perCell));
+      out[idx].count += 1;
+      if (!out[idx].category) out[idx].category = e.category;
+    }
+    return out;
+  }, [entities, lineCount]);
+
+  const modeOutputs = useMemo(
+    () => MODES.map((m) => ({ mode: m, chars: sanitizeText(docText, entities, m, pseudonymMap).length })),
+    [docText, entities, pseudonymMap],
+  );
+
   if (!result) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-20 text-center">
-        <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-veil-panel">
-          <BarChart3 className="h-5 w-5 text-veil-accent" />
-        </div>
-        <p className="text-sm font-medium text-veil-text">No analytics yet</p>
-        <p className="max-w-xs text-xs text-veil-muted">
-          Load a document and run a scan — every metric here reflects the real detection run.
-        </p>
+      <div className="flex flex-col gap-6">
+        <ViewHeader index="04 — Analysis" title="Scan analysis" desc="Numbers from your most recent scan. Nothing on this page is estimated or hardcoded." />
+        <EmptyState
+          title="No scan to analyse"
+          desc="Run a scan on any document and its measurements will appear here."
+          actionLabel="Go to Sanitize"
+          onAction={onGoSanitize}
+        />
       </div>
     );
   }
 
-  const total = result.entities.length;
+  const total = entities.length;
   const rejected = result.rejected.length;
-  const validationRate = total + rejected > 0 ? Math.round((total / (total + rejected)) * 100) : 100;
+  const considered = total + rejected;
+  const passRate = considered > 0 ? Math.round((total / considered) * 100) : 100;
+  const linesWith = new Set(entities.map((e) => e.line)).size;
+  const coverage = docText.length > 0 ? (result.charsSanitized / docText.length) * 100 : 0;
 
-  const counts = CATEGORIES.map((c) => ({
-    category: c,
-    count: entities.filter((e) => e.category === c).length,
-  }));
+  const counts = CATEGORIES.map((c) => ({ category: c, count: entities.filter((e) => e.category === c).length }));
   const maxCount = Math.max(1, ...counts.map((c) => c.count));
 
-  /* Donut geometry */
-  const R = 34;
-  const CIRC = 2 * Math.PI * R;
-  const validFrac = total + rejected > 0 ? total / (total + rejected) : 1;
-
-  const modeOutputs = MODE_ROWS.map((row) => ({
-    ...row,
-    chars: sanitizeText(docText, entities, row.mode, pseudonymMap).length,
-  }));
-
-  const cards = [
-    { label: 'Total detected', value: total },
-    { label: 'Validated candidates', value: total },
-    { label: 'Rejected candidates', value: rejected },
-    { label: 'Characters sanitized', value: result.charsSanitized },
-    { label: 'Processing duration', value: `${result.durationMs.toFixed(1)} ms` },
-    { label: 'Validation rate', value: `${validationRate}%` },
+  const metrics = [
+    { label: 'Values found', value: String(total) },
+    { label: 'Rejected', value: String(rejected) },
+    { label: 'Pass rate', value: `${passRate}%` },
+    { label: 'Chars hidden', value: result.charsSanitized.toLocaleString() },
+    { label: 'Of document', value: `${coverage.toFixed(coverage < 10 ? 1 : 0)}%` },
+    { label: 'Scan time', value: `${result.durationMs.toFixed(1)} ms` },
   ];
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto">
-      <div>
-        <h2 className="text-xl font-semibold tracking-tight text-veil-text">Detection analytics</h2>
-        <p className="mt-0.5 text-xs text-veil-muted">Computed from the most recent scan — nothing is hardcoded.</p>
-      </div>
+    <div className="flex flex-col gap-8">
+      <ViewHeader index="04 — Analysis" title="Scan analysis" desc="Numbers from your most recent scan. Nothing on this page is estimated or hardcoded." />
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        {cards.map((c) => (
-          <div key={c.label} className="rounded-xl border border-white/[0.08] bg-veil-panel px-4 py-3">
-            <p className="font-mono text-xl font-semibold tabular-nums text-veil-text">{c.value}</p>
-            <p className="mt-0.5 text-[11px] text-veil-muted">{c.label}</p>
+      <dl className="grid grid-cols-2 border-l border-t border-rule sm:grid-cols-3 xl:grid-cols-6">
+        {metrics.map((m) => (
+          <div key={m.label} className="border-b border-r border-rule bg-sheet px-5 py-5">
+            <dt className="label">{m.label}</dt>
+            <dd className="tabular mt-2 text-[30px] font-semibold leading-none tracking-[-0.03em] text-ink">{m.value}</dd>
           </div>
         ))}
-      </div>
+      </dl>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        {/* Category breakdown */}
-        <div className="rounded-xl border border-white/[0.08] bg-veil-panel p-5">
-          <h3 className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-veil-muted">
-            Detection breakdown
-          </h3>
-          <div className="mt-4 space-y-3">
-            {counts.map(({ category, count }) => {
-              const meta = CATEGORY_META[category];
-              return (
-                <div key={category} className="flex items-center gap-3">
-                  <span className="w-24 shrink-0 text-xs text-veil-text">{meta.label}</span>
-                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
-                    <motion.div
-                      className="h-full rounded-full"
-                      style={{ background: meta.color }}
-                      initial={{ width: 0 }}
-                      animate={{ width: `${(count / maxCount) * 100}%` }}
-                      transition={{ duration: 0.7, ease: 'easeOut' }}
-                    />
-                  </div>
-                  <span className="w-8 shrink-0 text-right font-mono text-xs tabular-nums text-veil-text">{count}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+      <div className="grid gap-8 lg:grid-cols-[1.2fr_1fr]">
+        <section>
+          <h2 className="label">By type</h2>
+          <ul className="mt-4 space-y-3">
+            {counts.map(({ category, count }, i) => (
+              <li key={category} className="grid grid-cols-[110px_1fr_36px] items-center gap-4">
+                <span className="flex items-center gap-2 text-[13px] text-ink">
+                  <Swatch category={category} />
+                  {CATEGORY_META[category].label}
+                </span>
+                <span className="h-[10px] bg-paper-3">
+                  <motion.span
+                    className="block h-full"
+                    style={{ background: CATEGORY_META[category].color }}
+                    initial={{ width: 0 }}
+                    animate={{ width: `${(count / maxCount) * 100}%` }}
+                    transition={{ duration: 0.6, delay: i * 0.05, ease: [0.22, 1, 0.36, 1] }}
+                  />
+                </span>
+                <span className="tabular text-right font-mono text-[13px] text-ink">{count}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
 
-        {/* Validation donut */}
-        <div className="flex items-center gap-6 rounded-xl border border-white/[0.08] bg-veil-panel p-5">
-          <div className="relative h-28 w-28 shrink-0">
-            <svg viewBox="0 0 84 84" className="h-full w-full -rotate-90">
-              <circle cx="42" cy="42" r={R} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="8" />
-              <motion.circle
-                cx="42"
-                cy="42"
-                r={R}
-                fill="none"
-                stroke="#5CE1B2"
-                strokeWidth="8"
-                strokeLinecap="round"
-                strokeDasharray={CIRC}
-                initial={{ strokeDashoffset: CIRC }}
-                animate={{ strokeDashoffset: CIRC * (1 - validFrac) }}
-                transition={{ duration: 0.9, ease: 'easeOut' }}
-              />
-            </svg>
-            <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className="font-mono text-lg font-semibold text-veil-text">{validationRate}%</span>
-              <span className="text-[10px] text-veil-muted">validated</span>
+        <section>
+          <h2 className="label">Validation</h2>
+          <div className="mt-4 flex items-center gap-6">
+            <div className="relative h-[120px] w-[120px] shrink-0">
+              <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90" aria-hidden="true">
+                <circle cx="50" cy="50" r="42" fill="none" stroke="#E1DCCF" strokeWidth="10" />
+                <motion.circle
+                  cx="50"
+                  cy="50"
+                  r="42"
+                  fill="none"
+                  stroke="#16150F"
+                  strokeWidth="10"
+                  pathLength={1}
+                  strokeDasharray="1 1"
+                  initial={{ strokeDashoffset: 1 }}
+                  animate={{ strokeDashoffset: 1 - (considered > 0 ? total / considered : 1) }}
+                  transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
+                />
+              </svg>
+              <span className="tabular absolute inset-0 flex items-center justify-center text-[22px] font-semibold tracking-[-0.02em] text-ink">
+                {passRate}%
+              </span>
+            </div>
+            <div className="space-y-2 text-[13px]">
+              <p className="flex items-center gap-2 text-ink">
+                <span className="h-2.5 w-2.5 bg-ink" /> {total} passed validation
+              </p>
+              <p className="flex items-center gap-2 text-ink">
+                <span className="h-2.5 w-2.5 bg-paper-3" /> {rejected} rejected
+              </p>
+              <p className="max-w-[16rem] text-[12.5px] leading-relaxed text-ink-3">
+                Rejected candidates matched a pattern but failed a check such as Luhn, and were left unchanged.
+              </p>
             </div>
           </div>
-          <div className="space-y-2 text-xs">
-            <p className="flex items-center gap-2 text-veil-text">
-              <span className="h-2 w-2 rounded-full bg-veil-accent" /> {total} validated entities
-            </p>
-            <p className="flex items-center gap-2 text-veil-text">
-              <span className="h-2 w-2 rounded-full bg-white/25" /> {rejected} rejected candidates
-            </p>
-            <p className="text-veil-muted">Rejected candidates failed validation (e.g. Luhn) and were left untouched.</p>
-          </div>
-        </div>
+        </section>
       </div>
 
-      {/* Redaction distribution */}
-      <div className="rounded-xl border border-white/[0.08] bg-veil-panel p-5">
-        <h3 className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-veil-muted">
-          Redaction output by mode
-        </h3>
-        <div className="mt-4 overflow-hidden rounded-lg border border-white/[0.07]">
-          <table className="w-full text-left text-sm">
+      <section>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="label">Where values appear</h2>
+          <span className="font-mono text-[11px] text-muted">
+            {linesWith} of {lineCount} lines contain a value
+          </span>
+        </div>
+        <div className="mt-4 flex h-12 w-full gap-px border border-rule bg-sheet p-1" role="img" aria-label={`Values appear on ${linesWith} of ${lineCount} lines`}>
+          {lineMap.map((cell, i) => (
+            <span
+              key={i}
+              className="flex-1"
+              title={`Line${cell.from === cell.to ? ` ${cell.from}` : `s ${cell.from}–${cell.to}`}: ${cell.count} value${cell.count === 1 ? '' : 's'}`}
+              style={{ background: cell.category ? CATEGORY_META[cell.category].color : '#EAE6DC', opacity: cell.count > 1 ? 1 : cell.count === 1 ? 0.75 : 1 }}
+            />
+          ))}
+        </div>
+        <div className="mt-1.5 flex justify-between font-mono text-[10.5px] text-muted">
+          <span>Line 1</span>
+          <span>Line {lineCount}</span>
+        </div>
+      </section>
+
+      <section>
+        <h2 className="label">Output by mode</h2>
+        <div className="mt-4 overflow-x-auto rounded-[4px] border border-rule bg-sheet">
+          <table className="w-full min-w-[480px] text-left">
             <thead>
-              <tr className="bg-veil-bg/50 font-mono text-[10px] uppercase tracking-[0.16em] text-veil-muted">
-                <th className="px-4 py-2.5 font-medium">Mode</th>
-                <th className="px-4 py-2.5 font-medium">Entities redacted</th>
-                <th className="px-4 py-2.5 font-medium">Output length</th>
+              <tr className="border-b border-rule">
+                {['Mode', 'Values replaced', 'Output length', 'Change'].map((h) => (
+                  <th key={h} className="label px-5 py-3 font-medium">
+                    {h}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {modeOutputs.map((row) => (
-                <tr key={row.mode} className="border-t border-white/[0.05]">
-                  <td className="px-4 py-2.5 text-veil-text">{row.label}</td>
-                  <td className="px-4 py-2.5 font-mono tabular-nums text-veil-text">{total}</td>
-                  <td className="px-4 py-2.5 font-mono tabular-nums text-veil-muted">{row.chars.toLocaleString()} chars</td>
-                </tr>
-              ))}
+              <tr className="border-b border-rule/70">
+                <td className="px-5 py-3 text-[13px] text-ink-3">Original</td>
+                <td className="px-5 py-3 font-mono text-[12.5px] text-ink-3">—</td>
+                <td className="tabular px-5 py-3 font-mono text-[12.5px] text-ink-3">{docText.length.toLocaleString()} chars</td>
+                <td className="px-5 py-3 font-mono text-[12.5px] text-ink-3">—</td>
+              </tr>
+              {modeOutputs.map((row) => {
+                const diff = row.chars - docText.length;
+                return (
+                  <tr key={row.mode} className="border-b border-rule/70 last:border-b-0">
+                    <td className="px-5 py-3 text-[13px] font-medium text-ink">
+                      {MODE_LABEL[row.mode]}
+                      {row.mode === mode && <span className="ml-2 font-mono text-[10.5px] font-normal uppercase tracking-label text-signal">active</span>}
+                    </td>
+                    <td className="tabular px-5 py-3 font-mono text-[12.5px] text-ink">{total}</td>
+                    <td className="tabular px-5 py-3 font-mono text-[12.5px] text-ink">{row.chars.toLocaleString()} chars</td>
+                    <td className="tabular px-5 py-3 font-mono text-[12.5px] text-ink-3">
+                      {diff > 0 ? '+' : ''}
+                      {diff.toLocaleString()}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
-      </div>
+      </section>
     </div>
   );
 }

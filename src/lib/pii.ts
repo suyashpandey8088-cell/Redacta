@@ -14,12 +14,12 @@ export const CATEGORY_META: Record<
   Category,
   { label: string; prefix: string; color: string; softBg: string; underline: string }
 > = {
-  EMAIL: { label: 'Email', prefix: 'USER', color: '#5CE1B2', softBg: 'rgba(92,225,178,0.14)', underline: '#5CE1B2' },
-  PHONE: { label: 'Phone', prefix: 'PHONE', color: '#8B9CFF', softBg: 'rgba(139,156,255,0.14)', underline: '#8B9CFF' },
-  IP: { label: 'IP Address', prefix: 'IP', color: '#7DD3FC', softBg: 'rgba(125,211,252,0.14)', underline: '#7DD3FC' },
-  PAN: { label: 'PAN', prefix: 'PAN', color: '#FBBF24', softBg: 'rgba(251,191,36,0.14)', underline: '#FBBF24' },
-  AADHAAR: { label: 'Aadhaar', prefix: 'AADHAAR', color: '#F472B6', softBg: 'rgba(244,114,182,0.14)', underline: '#F472B6' },
-  CARD: { label: 'Credit Card', prefix: 'CARD', color: '#FB923C', softBg: 'rgba(251,146,60,0.14)', underline: '#FB923C' },
+  EMAIL: { label: 'Email', prefix: 'USER', color: '#2952CC', softBg: 'rgba(41,82,204,0.12)', underline: '#2952CC' },
+  PHONE: { label: 'Phone', prefix: 'PHONE', color: '#6E3FC9', softBg: 'rgba(110,63,201,0.12)', underline: '#6E3FC9' },
+  IP: { label: 'IP Address', prefix: 'IP', color: '#0B7A70', softBg: 'rgba(11,122,112,0.13)', underline: '#0B7A70' },
+  PAN: { label: 'PAN', prefix: 'PAN', color: '#A86A12', softBg: 'rgba(168,106,18,0.14)', underline: '#A86A12' },
+  AADHAAR: { label: 'Aadhaar', prefix: 'AADHAAR', color: '#B4235A', softBg: 'rgba(180,35,90,0.12)', underline: '#B4235A' },
+  CARD: { label: 'Credit Card', prefix: 'CARD', color: '#C2410C', softBg: 'rgba(194,65,12,0.12)', underline: '#C2410C' },
 };
 
 export interface Entity {
@@ -536,21 +536,38 @@ export function serializeCSV(rows: string[][]): string {
 
 /**
  * Sanitize CSV cell-by-cell so quoting and structure are preserved.
+ * One alias map is shared across every cell, so the same value receives
+ * the same alias in every row. Pass `baseMap` (built from the whole
+ * document) to keep aliases identical to the on-screen preview.
  * Returns the sanitized CSV plus the total number of entities found.
  */
 export function sanitizeCSV(
   text: string,
   enabled: Category[],
   mode: RedactionMode,
+  baseMap?: Map<string, string>,
 ): { output: string; entityCount: number } {
   const rows = parseCSV(text);
+  const map = new Map<string, string>(baseMap ?? []);
+  const counters: Partial<Record<Category, number>> = {};
+  for (const key of map.keys()) {
+    const category = key.slice(0, key.indexOf(':')) as Category;
+    counters[category] = (counters[category] ?? 0) + 1;
+  }
   let entityCount = 0;
   const sanitized = rows.map((row) =>
     row.map((cell) => {
       const res = detectPII(cell, enabled);
       entityCount += res.entities.length;
       if (res.entities.length === 0) return cell;
-      const map = buildPseudonymMap(res.entities);
+      for (const e of res.entities) {
+        const key = `${e.category}:${e.normalized}`;
+        if (!map.has(key)) {
+          const n = (counters[e.category] ?? 0) + 1;
+          counters[e.category] = n;
+          map.set(key, `${CATEGORY_META[e.category].prefix}_${String(n).padStart(2, '0')}`);
+        }
+      }
       return sanitizeText(cell, res.entities, mode, map);
     }),
   );

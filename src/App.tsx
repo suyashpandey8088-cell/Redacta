@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { CheckCircle2 } from 'lucide-react';
 import Landing from './components/Landing';
 import Workspace, { type WorkspaceTab } from './components/Workspace';
+import { MODE_LABEL } from './components/ui';
 import {
   buildPseudonymMap,
   detectPII,
@@ -12,9 +12,13 @@ import {
   type Category,
   type DetectionResult,
   type RedactionMode,
+  type Segment,
 } from './lib/pii';
 import { SAMPLE_CSV, SAMPLE_CSV_FILENAME, SAMPLE_DOCUMENT, SAMPLE_FILENAME } from './lib/sample';
 import { exportAudit, makeEvent, type AuditEvent } from './lib/audit';
+
+/** Documents up to this size are re-scanned on every edit after the first scan. */
+const LIVE_SCAN_LIMIT = 60_000;
 
 function downloadText(content: string, filename: string, mime: string) {
   const blob = new Blob([content], { type: `${mime};charset=utf-8` });
@@ -37,12 +41,14 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-const GRAIN =
-  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E\")";
+function baseName(name: string) {
+  const stem = name.replace(/\.[^.]+$/, '').trim();
+  return stem || 'document';
+}
 
 export default function App() {
   const [view, setView] = useState<'home' | 'app'>('home');
-  const [tab, setTab] = useState<WorkspaceTab>('sanitizer');
+  const [tab, setTab] = useState<WorkspaceTab>('sanitize');
 
   const [docText, setDocText] = useState('');
   const [fileName, setFileName] = useState('');
@@ -51,132 +57,167 @@ export default function App() {
   const [mode, setMode] = useState<RedactionMode>('PARTIAL');
   const [enabledCats, setEnabledCats] = useState<Category[]>([...CATEGORIES]);
   const [result, setResult] = useState<DetectionResult | null>(null);
+  const [stale, setStale] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [audit, setAudit] = useState<AuditEvent[]>([]);
   const [compareLayout, setCompareLayout] = useState<'side' | 'stacked'>('side');
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
   const toastTimer = useRef<number | null>(null);
+  const scanTimer = useRef<number | null>(null);
+  /** True once the current document has been scanned; enables live re-scanning on edit. */
+  const live = useRef(false);
 
   const showToast = useCallback((message: string) => {
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     setToast({ id: Date.now(), message });
-    toastTimer.current = window.setTimeout(() => setToast(null), 3200);
+    toastTimer.current = window.setTimeout(() => setToast(null), 3000);
   }, []);
 
-  useEffect(() => () => {
-    if (toastTimer.current) window.clearTimeout(toastTimer.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (toastTimer.current) window.clearTimeout(toastTimer.current);
+      if (scanTimer.current) window.clearTimeout(scanTimer.current);
+    },
+    [],
+  );
+
+  /* Each view starts at the top of the page. */
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [view]);
 
   const logAudit = useCallback((event: string, status: AuditEvent['status'], detail: string) => {
     setAudit((prev) => [...prev, makeEvent(event, status, detail)]);
   }, []);
 
-  const entities = result?.entities ?? [];
-
+  const entities = useMemo(() => result?.entities ?? [], [result]);
   const pseudonymMap = useMemo(() => buildPseudonymMap(entities), [entities]);
 
-  const { sanitized, segments } = useMemo(() => {
-    if (!result) return { sanitized: '', segments: [] as ReturnType<typeof sanitizeWithSegments>['segments'] };
+  const { sanitized, segments } = useMemo((): { sanitized: string; segments: Segment[] } => {
+    if (!result) return { sanitized: '', segments: [] };
     const r = sanitizeWithSegments(docText, entities, mode, pseudonymMap);
     return { sanitized: r.output, segments: r.segments };
   }, [result, docText, entities, mode, pseudonymMap]);
 
-  const selected = useMemo(
-    () => entities.find((e) => e.id === selectedId) ?? null,
-    [entities, selectedId],
-  );
-
+  const selected = useMemo(() => entities.find((e) => e.id === selectedId) ?? null, [entities, selectedId]);
   const selectedIndex = selected ? entities.findIndex((e) => e.id === selected.id) : -1;
 
-  /* Import a document (file, demo) and scan it immediately. */
+  const applyScan = useCallback(
+    (text: string, cats: Category[], kind: 'txt' | 'csv') => {
+      logAudit('Scan started', 'info', `${kind.toUpperCase()} · ${text.length} chars · ${cats.length} categories`);
+      const res = detectPII(text, cats);
+      setResult(res);
+      setStale(false);
+      setSelectedId(null);
+      live.current = true;
+      logAudit('Detection completed', 'success', `${res.entities.length} entities · ${res.durationMs.toFixed(1)} ms`);
+      logAudit('Validation completed', 'success', `${res.rejected.length} candidates rejected`);
+      return res;
+    },
+    [logAudit],
+  );
+
+  /* Import a document from any source and scan it immediately. */
   const importAndScan = useCallback(
     (text: string, name: string, kind: 'txt' | 'csv', source: string) => {
       setDocText(text);
       setFileName(name);
       setFileKind(kind);
       setView('app');
-      setTab('sanitizer');
+      setTab('sanitize');
       logAudit('Document imported', 'info', `${kind.toUpperCase()} · ${text.length} chars · ${source}`);
-      const res = detectPII(text, enabledCats);
-      setResult(res);
-      setSelectedId(null);
-      logAudit('Scan started', 'info', `${kind.toUpperCase()} · ${enabledCats.length} categories enabled`);
-      logAudit('Detection completed', 'success', `${res.entities.length} entities · ${res.durationMs.toFixed(1)} ms`);
-      logAudit('Validation completed', 'success', `${res.rejected.length} candidates rejected`);
-      showToast(`Scan complete — ${res.entities.length} entities found`);
+      const res = applyScan(text, enabledCats, kind);
+      showToast(`${res.entities.length} value${res.entities.length === 1 ? '' : 's'} found in ${name}`);
     },
-    [enabledCats, logAudit, showToast],
+    [applyScan, enabledCats, logAudit, showToast],
   );
 
   const handleFile = useCallback(
     async (file: File) => {
-      const kind: 'txt' | 'csv' = file.name.toLowerCase().endsWith('.csv') ? 'csv' : 'txt';
+      const lower = file.name.toLowerCase();
+      const isCsv = lower.endsWith('.csv') || file.type === 'text/csv';
+      const isText = isCsv || lower.endsWith('.txt') || file.type.startsWith('text/');
+      if (!isText) {
+        showToast('Only .txt and .csv files are supported');
+        return;
+      }
       try {
         const text = await file.text();
-        importAndScan(text, file.name, kind, 'file upload');
+        importAndScan(text, file.name, isCsv ? 'csv' : 'txt', 'file');
       } catch {
-        showToast('Could not read that file');
+        showToast('That file could not be read');
       }
     },
     [importAndScan, showToast],
   );
 
-  const loadDemo = useCallback(() => {
-    importAndScan(SAMPLE_DOCUMENT, SAMPLE_FILENAME, 'txt', 'interactive demo');
+  const loadSample = useCallback(() => {
+    importAndScan(SAMPLE_DOCUMENT, SAMPLE_FILENAME, 'txt', 'sample record');
   }, [importAndScan]);
 
-  const loadCsvDemo = useCallback(() => {
-    importAndScan(SAMPLE_CSV, SAMPLE_CSV_FILENAME, 'csv', 'CSV demo');
+  const loadCsvSample = useCallback(() => {
+    importAndScan(SAMPLE_CSV, SAMPLE_CSV_FILENAME, 'csv', 'sample CSV');
   }, [importAndScan]);
 
   const runScan = useCallback(() => {
     if (!docText.trim()) {
-      showToast('Load a document first');
+      showToast('Add some text first');
       return;
     }
+    if (scanning) return;
     setScanning(true);
-    logAudit('Scan started', 'info', `${fileKind.toUpperCase()} · ${docText.length} chars`);
-    window.setTimeout(() => {
-      const res = detectPII(docText, enabledCats);
-      setResult(res);
-      setSelectedId(null);
-      logAudit('Detection completed', 'success', `${res.entities.length} entities · ${res.durationMs.toFixed(1)} ms`);
-      logAudit('Validation completed', 'success', `${res.rejected.length} candidates rejected`);
+    /* Brief pause so the sweep is visible; detection itself is synchronous and local. */
+    scanTimer.current = window.setTimeout(() => {
+      const res = applyScan(docText, enabledCats, fileKind);
       setScanning(false);
-      showToast(`Scan complete — ${res.entities.length} entities found`);
+      showToast(`${res.entities.length} value${res.entities.length === 1 ? '' : 's'} found`);
     }, 420);
-  }, [docText, enabledCats, fileKind, logAudit, showToast]);
+  }, [applyScan, docText, enabledCats, fileKind, scanning, showToast]);
 
-  const handleTextChange = useCallback((text: string) => {
-    setDocText(text);
-    /* Offsets from a previous scan no longer apply. */
-    setResult(null);
-    setSelectedId(null);
-  }, []);
+  const handleTextChange = useCallback(
+    (text: string) => {
+      setDocText(text);
+      setSelectedId(null);
+      if (!text) {
+        setResult(null);
+        setStale(false);
+        live.current = false;
+        return;
+      }
+      if (live.current && text.length <= LIVE_SCAN_LIMIT) {
+        /* Live re-scan: offsets are recomputed for the edited text. Not logged per keystroke. */
+        setResult(detectPII(text, enabledCats));
+        setStale(false);
+      } else {
+        /* Offsets from an earlier scan no longer apply to this text. */
+        setResult(null);
+        setStale(live.current);
+      }
+    },
+    [enabledCats],
+  );
 
   const handleModeChange = useCallback(
     (m: RedactionMode) => {
+      if (m === mode) return;
       setMode(m);
-      logAudit('Redaction mode changed', 'info', m === 'FULL' ? 'Full Mask' : m === 'PARTIAL' ? 'Partial Mask' : 'Pseudonymization');
+      logAudit('Redaction mode changed', 'info', MODE_LABEL[m]);
     },
-    [logAudit],
+    [logAudit, mode],
   );
 
   const handleToggleCategory = useCallback(
     (c: Category) => {
-      setEnabledCats((prev) => {
-        const next = prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c];
-        if (result) {
-          const res = detectPII(docText, next);
-          setResult(res);
-          setSelectedId(null);
-        }
-        return next;
-      });
-      logAudit('Category filter updated', 'info', `${c} toggled`);
+      const next = enabledCats.includes(c) ? enabledCats.filter((x) => x !== c) : [...enabledCats, c];
+      setEnabledCats(next);
+      if (result) {
+        setResult(detectPII(docText, next));
+        setSelectedId(null);
+      }
+      logAudit('Category filter updated', 'info', `${c} ${next.includes(c) ? 'enabled' : 'disabled'}`);
     },
-    [docText, logAudit, result],
+    [docText, enabledCats, logAudit, result],
   );
 
   const exportSanitized = useCallback(() => {
@@ -184,16 +225,17 @@ export default function App() {
       showToast('Run a scan before exporting');
       return;
     }
+    const stem = `${baseName(fileName)}-sanitized`;
     if (fileKind === 'csv') {
-      const { output } = sanitizeCSV(docText, enabledCats, mode);
-      downloadText(output, 'veil-sanitized.csv', 'text/csv');
-      logAudit('Export generated', 'success', `CSV · ${mode} mode`);
+      const { output } = sanitizeCSV(docText, enabledCats, mode, pseudonymMap);
+      downloadText(output, `${stem}.csv`, 'text/csv');
+      logAudit('Export generated', 'success', `CSV · ${MODE_LABEL[mode]}`);
     } else {
-      downloadText(sanitized, 'veil-sanitized.txt', 'text/plain');
-      logAudit('Export generated', 'success', `TXT · ${mode} mode`);
+      downloadText(sanitized, `${stem}.txt`, 'text/plain');
+      logAudit('Export generated', 'success', `TXT · ${MODE_LABEL[mode]}`);
     }
-    showToast('Sanitized file downloaded');
-  }, [result, fileKind, docText, enabledCats, mode, sanitized, logAudit, showToast]);
+    showToast(`Saved ${stem}.${fileKind}`);
+  }, [result, fileName, fileKind, docText, enabledCats, mode, pseudonymMap, sanitized, logAudit, showToast]);
 
   const copySanitized = useCallback(async () => {
     if (!result) {
@@ -201,18 +243,18 @@ export default function App() {
       return;
     }
     const ok = await copyText(sanitized);
-    showToast(ok ? 'Sanitized output copied' : 'Clipboard unavailable in this browser');
+    showToast(ok ? 'Sanitized text copied' : 'Clipboard is not available in this browser');
   }, [result, sanitized, showToast]);
 
   const copyAlias = useCallback(
     async (alias: string) => {
       const ok = await copyText(alias);
-      showToast(ok ? `${alias} copied` : 'Clipboard unavailable in this browser');
+      showToast(ok ? `${alias} copied` : 'Clipboard is not available in this browser');
     },
     [showToast],
   );
 
-  const resetMapping = useCallback(() => {
+  const rebuildAliases = useCallback(() => {
     if (!docText.trim()) {
       showToast('No document loaded');
       return;
@@ -220,8 +262,8 @@ export default function App() {
     const res = detectPII(docText, enabledCats);
     setResult(res);
     setSelectedId(null);
-    logAudit('Pseudonym mapping reset', 'info', `${res.entities.length} entities re-mapped`);
-    showToast('Pseudonym mapping regenerated');
+    logAudit('Pseudonym mapping rebuilt', 'info', `${buildPseudonymMap(res.entities).size} aliases`);
+    showToast('Aliases rebuilt from the current text');
   }, [docText, enabledCats, logAudit, showToast]);
 
   const exportAuditReport = useCallback(
@@ -229,46 +271,47 @@ export default function App() {
       const { content, filename, mime } = exportAudit(audit, format);
       downloadText(content, filename, mime);
       logAudit('Export generated', 'success', `Audit report · ${format.toUpperCase()}`);
-      showToast('Audit report downloaded');
+      showToast(`Saved ${filename}`);
     },
     [audit, logAudit, showToast],
   );
 
-  const clearSession = useCallback(() => {
+  const resetDocument = useCallback(() => {
+    if (scanTimer.current) window.clearTimeout(scanTimer.current);
+    setScanning(false);
     setDocText('');
     setFileName('');
+    setFileKind('txt');
     setResult(null);
+    setStale(false);
     setSelectedId(null);
-    logAudit('Session cleared', 'warning', 'Document and mappings removed from memory');
+    live.current = false;
+  }, []);
+
+  const clearSession = useCallback(() => {
+    resetDocument();
+    logAudit('Session cleared', 'warning', 'Document and alias map removed from memory');
     showToast('Session cleared');
-  }, [logAudit, showToast]);
+  }, [logAudit, resetDocument, showToast]);
 
   const clearDoc = useCallback(() => {
-    setDocText('');
-    setFileName('');
-    setResult(null);
-    setSelectedId(null);
+    resetDocument();
+    logAudit('Document cleared', 'info', 'Editor emptied');
     showToast('Document cleared');
-  }, [showToast]);
+  }, [logAudit, resetDocument, showToast]);
 
   const pasteFromClipboard = useCallback(async () => {
     try {
       const text = await navigator.clipboard.readText();
       if (text) {
-        setDocText(text);
-        setFileName('pasted-text.txt');
-        setFileKind('txt');
-        setResult(null);
-        setSelectedId(null);
-        logAudit('Document imported', 'info', `TXT · ${text.length} chars · clipboard`);
-        showToast('Text pasted — run a scan');
+        importAndScan(text, 'pasted-text.txt', 'txt', 'clipboard');
       } else {
-        showToast('Clipboard is empty');
+        showToast('The clipboard is empty');
       }
     } catch {
-      showToast('Clipboard access denied — click the editor and press Ctrl+V');
+      showToast('Clipboard access was blocked — click the sheet and press Ctrl+V');
     }
-  }, [logAudit, showToast]);
+  }, [importAndScan, showToast]);
 
   const stepEntity = useCallback(
     (dir: 1 | -1) => {
@@ -280,22 +323,29 @@ export default function App() {
     [entities, selectedIndex],
   );
 
-  return (
-    <div className="min-h-screen bg-veil-bg font-sans text-veil-text">
-      {/* Film grain overlay */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none fixed inset-0 z-40 opacity-[0.035]"
-        style={{ backgroundImage: GRAIN }}
-      />
+  /* Ctrl/Cmd + Enter scans from anywhere in the workspace. */
+  useEffect(() => {
+    if (view !== 'app') return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        setTab('sanitize');
+        runScan();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [view, runScan]);
 
+  return (
+    <div className="min-h-screen bg-paper font-sans text-ink">
       {view === 'home' ? (
         <Landing
           onLaunch={() => {
             setView('app');
-            setTab('sanitizer');
+            setTab('sanitize');
           }}
-          onLoadDemo={loadDemo}
+          onLoadSample={loadSample}
         />
       ) : (
         <Workspace
@@ -309,9 +359,11 @@ export default function App() {
           enabledCats={enabledCats}
           onToggleCategory={handleToggleCategory}
           result={result}
+          stale={stale}
           scanning={scanning}
           onScan={runScan}
           selected={selected}
+          selectedIndex={selectedIndex}
           onSelectEntity={setSelectedId}
           onCloseDetail={() => setSelectedId(null)}
           onPrev={() => stepEntity(-1)}
@@ -319,17 +371,16 @@ export default function App() {
           hasPrev={selectedIndex > 0}
           hasNext={selectedIndex >= 0 && selectedIndex < entities.length - 1}
           pseudonymMap={pseudonymMap}
-          sanitized={sanitized}
           segments={segments}
           onTextChange={handleTextChange}
           onFile={handleFile}
-          onLoadDemo={loadDemo}
-          onLoadCsvDemo={loadCsvDemo}
+          onLoadSample={loadSample}
+          onLoadCsvSample={loadCsvSample}
           onClearDoc={clearDoc}
           onExport={exportSanitized}
           onCopySanitized={copySanitized}
           onCopyAlias={copyAlias}
-          onResetMapping={resetMapping}
+          onResetMapping={rebuildAliases}
           onExportAudit={exportAuditReport}
           onClearSession={clearSession}
           compareLayout={compareLayout}
@@ -340,23 +391,26 @@ export default function App() {
         />
       )}
 
-      {/* Toast */}
-      <AnimatePresence>
-        {toast && (
-          <motion.div
-            key={toast.id}
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 8 }}
-            transition={{ duration: 0.25 }}
-            className="fixed bottom-5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-veil-accent/30 bg-veil-elevated px-4 py-2.5 text-sm text-veil-text shadow-2xl"
-            role="status"
-          >
-            <CheckCircle2 className="h-4 w-4 shrink-0 text-veil-accent" />
-            {toast.message}
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Centering lives on a wrapper so Framer Motion's transform doesn't override it. */}
+      <div className="pointer-events-none fixed inset-x-0 bottom-5 z-50 flex justify-center px-4">
+        <AnimatePresence>
+          {toast && (
+            <motion.div
+              key={toast.id}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 6 }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
+              className="flex max-w-full items-center gap-3 rounded-[3px] bg-ink px-4 py-2.5 text-[13px] text-paper shadow-lift"
+              role="status"
+              aria-live="polite"
+            >
+              <span className="h-[7px] w-[7px] shrink-0 bg-signal" aria-hidden="true" />
+              {toast.message}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }

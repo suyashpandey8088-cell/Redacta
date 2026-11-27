@@ -108,7 +108,7 @@ describe('redaction modes', () => {
   });
 });
 
-describe('sample demonstration document', () => {
+describe('sample record document', () => {
   it('finds 9 entities and rejects the invalid card', async () => {
     const { SAMPLE_DOCUMENT } = await import('./sample');
     const res = detectPII(SAMPLE_DOCUMENT, ALL);
@@ -147,5 +147,18 @@ describe('CSV', () => {
     const { output, entityCount } = sanitizeCSV(csv, ALL, 'FULL');
     expect(entityCount).toBe(1);
     expect(output).toBe('name,email\nAarav,[REDACTED]');
+  });
+
+  it('keeps pseudonyms consistent across CSV rows', () => {
+    const csv = 'email,backup\na@example.com,b@example.com\nb@example.com,a@example.com';
+    const { output } = sanitizeCSV(csv, ALL, 'PSEUDONYM');
+    expect(output).toBe('email,backup\nUSER_01,USER_02\nUSER_02,USER_01');
+  });
+
+  it('reuses document-level aliases when a base map is supplied', () => {
+    const csv = 'name,email\nPriya,priya@example.com\nAarav,aarav@example.com';
+    const docMap = buildPseudonymMap(detectPII(csv, ALL).entities);
+    const { output } = sanitizeCSV(csv, ALL, 'PSEUDONYM', docMap);
+    expect(output).toBe('name,email\nPriya,USER_01\nAarav,USER_02');
   });
 });
