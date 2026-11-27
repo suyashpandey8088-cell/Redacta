@@ -70,7 +70,7 @@ Exports are named after the source file (`customer-record-sample-sanitized.txt`)
 | Framework | React 18 + TypeScript (strict) |
 | Build | Vite 5 |
 | Styling | Tailwind CSS 3 |
-| Motion | Framer Motion (`useScroll`, `useTransform`, `whileInView`) |
+| Motion | Framer Motion (`useScroll`, `useTransform`, `useAnimate`) + Lenis smooth scrolling; all motion honours `prefers-reduced-motion` |
 | Type | IBM Plex Sans + IBM Plex Mono via `@fontsource` |
 | Icons | Lucide React |
 | Tests | Vitest |
@@ -103,9 +103,11 @@ src/
 │   ├── pii.ts            # Detection, validation, redaction, pseudonyms, CSV
 │   ├── pii.test.ts       # Engine tests
 │   ├── sample.ts         # Synthetic sample record, sample CSV, landing snippets
+│   ├── smoothScroll.ts   # Lenis smooth scroll, anchor jumps, reduced-motion switch
 │   └── audit.ts          # Metadata-only audit events and report export
 ├── components/
 │   ├── Landing.tsx       # Scroll-driven landing page
+│   ├── fx.tsx            # Landing effects: scramble text, split reveal, intro curtain, section wipe
 │   ├── Workspace.tsx     # Top bar, tabs, Sanitize toolbar and view routing
 │   ├── Editor.tsx        # Highlight overlay editor + inspector
 │   ├── FindingsPanel.tsx # Summary, type filters, values, rejected list

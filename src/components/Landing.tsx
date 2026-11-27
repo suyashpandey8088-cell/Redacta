@@ -1,13 +1,18 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import {
-  AnimatePresence,
+  MotionConfig,
   motion,
+  useInView,
+  useMotionTemplate,
+  useMotionValue,
   useMotionValueEvent,
   useScroll,
   useSpring,
   useTransform,
+  useVelocity,
   type MotionValue,
 } from 'framer-motion';
+import 'lenis/dist/lenis.css';
 import { ArrowDown, ArrowRight, Check, Minus } from 'lucide-react';
 import {
   CATEGORIES,
@@ -21,6 +26,8 @@ import {
 } from '../lib/pii';
 import { HERO_RECORD, MODES_SNIPPET } from '../lib/sample';
 import { Logo, Swatch } from './ui';
+import { INTRO_TEXT_DELAY, IntroCurtain, Scramble, SectionWipeProvider, SplitReveal, useSectionWipe } from './fx';
+import { scrollToTarget, startSmoothScroll } from '../lib/smoothScroll';
 
 interface LandingProps {
   onLaunch: () => void;
@@ -28,19 +35,25 @@ interface LandingProps {
 }
 
 export default function Landing({ onLaunch, onLoadSample }: LandingProps) {
+  useEffect(() => startSmoothScroll(), []);
   return (
-    <div className="bg-paper text-ink">
-      <Nav onLaunch={onLaunch} />
-      <main>
-        <Hero onLaunch={onLaunch} onLoadSample={onLoadSample} />
-        <Ticker />
-        <Detection />
-        <Modes />
-        <Architecture />
-        <Closing onLaunch={onLaunch} onLoadSample={onLoadSample} />
-      </main>
-      <Footer />
-    </div>
+    <MotionConfig reducedMotion="user">
+      <SectionWipeProvider>
+        <div className="bg-paper text-ink">
+          <IntroCurtain />
+          <Nav onLaunch={onLaunch} />
+          <main>
+            <Hero onLaunch={onLaunch} onLoadSample={onLoadSample} />
+            <Ticker />
+            <Detection />
+            <Modes />
+            <Architecture />
+            <Closing onLaunch={onLaunch} onLoadSample={onLoadSample} />
+          </main>
+          <Footer />
+        </div>
+      </SectionWipeProvider>
+    </MotionConfig>
   );
 }
 
@@ -54,15 +67,56 @@ const NAV_LINKS = [
   { id: 'architecture', label: 'Architecture' },
 ];
 
-function scrollToId(id: string) {
-  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+const SECTIONS = [
+  { id: 'top', label: 'Intro' },
+  { id: 'detection', label: 'Detection' },
+  { id: 'modes', label: 'Modes' },
+  { id: 'architecture', label: 'Architecture' },
+  { id: 'start', label: 'Start' },
+];
+
+/** Index of the section crossing the middle of the viewport. */
+function useCurrentSection() {
+  const [current, setCurrent] = useState(0);
+  useEffect(() => {
+    const els = SECTIONS.slice(1)
+      .map((s) => document.getElementById(s.id))
+      .filter((el): el is HTMLElement => !!el);
+    const visible = new Set<string>();
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) visible.add(e.target.id);
+          else visible.delete(e.target.id);
+        }
+        let idx = 0;
+        SECTIONS.forEach((s, i) => {
+          if (visible.has(s.id)) idx = i;
+        });
+        setCurrent(idx);
+      },
+      { rootMargin: '-50% 0px -50% 0px' },
+    );
+    els.forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  }, []);
+  return current;
 }
 
 function Nav({ onLaunch }: { onLaunch: () => void }) {
+  const wipe = useSectionWipe();
   const { scrollY, scrollYProgress } = useScroll();
   const progress = useSpring(scrollYProgress, { stiffness: 220, damping: 40, restDelta: 0.001 });
   const [scrolled, setScrolled] = useState(false);
-  useMotionValueEvent(scrollY, 'change', (v) => setScrolled(v > 12));
+  const scrolledRef = useRef(false);
+  useMotionValueEvent(scrollY, 'change', (v) => {
+    const next = v > 12;
+    if (next !== scrolledRef.current) {
+      scrolledRef.current = next;
+      setScrolled(next);
+    }
+  });
+  const section = useCurrentSection();
 
   return (
     <header
@@ -71,10 +125,17 @@ function Nav({ onLaunch }: { onLaunch: () => void }) {
       }`}
     >
       <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-4 px-5 sm:px-8">
-        <Logo onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} />
+        <div className="flex items-center gap-5">
+          <Logo onClick={() => wipe('top')} />
+          <span className="tabular hidden items-center gap-2 font-mono text-[10.5px] uppercase tracking-label text-muted lg:flex" aria-hidden="true">
+            <span className="h-3 w-px bg-rule-2" />
+            <Scramble text={`${String(section).padStart(2, '0')} / ${String(SECTIONS.length - 1).padStart(2, '0')}`} animateOnMount={false} duration={380} />
+            <Scramble text={SECTIONS[section].label} animateOnMount={false} duration={420} className="text-ink-2" />
+          </span>
+        </div>
         <nav className="hidden items-center gap-1 md:flex" aria-label="Sections">
           {NAV_LINKS.map((l) => (
-            <button key={l.id} onClick={() => scrollToId(l.id)} className="btn-quiet">
+            <button key={l.id} onClick={() => wipe(l.id)} className="btn-quiet">
               {l.label}
             </button>
           ))}
@@ -147,42 +208,133 @@ function HeroCopy({
   onLoadSample: () => void;
   p?: MotionValue<number>;
 }) {
+  const D = INTRO_TEXT_DELAY;
   return (
     <div>
-      <p className="label flex items-center gap-2">
+      <motion.p
+        className="label flex items-center gap-2"
+        initial={{ opacity: 0, x: -12 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ delay: D - 0.1, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+      >
         <span className="h-[7px] w-[7px] bg-signal" aria-hidden="true" />
         Client-side PII redaction
-      </p>
-      <h1 className="mt-6 text-[clamp(2.6rem,5.6vw,5.4rem)] font-semibold leading-[0.98] tracking-[-0.04em]">
-        Share the
+      </motion.p>
+      <h1
+        aria-label="Share the document. Not the person in it."
+        className="mt-6 text-[clamp(2.6rem,5.6vw,5.4rem)] font-semibold leading-[0.98] tracking-[-0.04em]"
+      >
+        <SplitReveal text="Share the" delay={D} />
         <br />
-        document.
+        <SplitReveal text="document." delay={D + 0.24} />
         <br />
         <span className="text-ink-3">
-          Not the{' '}
+          <SplitReveal text="Not the" delay={D + 0.5} />{' '}
           {p ? (
             <RedactBar p={p} from={0.83} to={0.9} inset="0.16em" insetBottom="-0.1em">
-              person
+              <SplitReveal text="person" delay={D + 0.7} />
             </RedactBar>
           ) : (
-            'person'
+            <SplitReveal text="person" delay={D + 0.7} />
           )}
           <br />
-          in it.
+          <SplitReveal text="in it." delay={D + 0.88} />
+          <motion.span
+            aria-hidden="true"
+            className="ml-[0.08em] inline-block h-[0.78em] w-[0.09em] translate-y-[0.06em] bg-signal"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: D + 1.05, duration: 0.01 }}
+          >
+            <span className="caret-blink block h-full w-full bg-signal" />
+          </motion.span>
         </span>
       </h1>
-      <p className="mt-7 max-w-[30rem] text-[16px] leading-relaxed text-ink-2 sm:text-[17px]">
+      <motion.p
+        className="mt-7 max-w-[30rem] text-[16px] leading-relaxed text-ink-2 sm:text-[17px]"
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: D + 0.95, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+      >
         Redacta finds emails, phone numbers, IP addresses, PAN, Aadhaar and card numbers in your text, then masks or
         pseudonymizes them — entirely inside this browser tab. Nothing is uploaded.
-      </p>
-      <div className="mt-9 flex flex-wrap items-center gap-3">
+      </motion.p>
+      <motion.div
+        className="mt-9 flex flex-wrap items-center gap-3"
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: D + 1.08, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+      >
         <button onClick={onLaunch} className="btn-ink px-5 py-3 text-[14px]">
           Open workspace <ArrowRight className="h-4 w-4" />
         </button>
         <button onClick={onLoadSample} className="btn-line px-5 py-3 text-[14px]">
           Try the sample record
         </button>
-      </div>
+      </motion.div>
+    </div>
+  );
+}
+
+const SHEET_PRE =
+  'overflow-hidden whitespace-pre pr-4 font-mono text-[10.5px] leading-[24px] text-ink sm:leading-[26px] min-[400px]:text-[11.5px] sm:text-[13px]';
+
+const LENS = 62;
+
+/** Mouse-only lens that shows the unredacted text under the bars. Nothing leaves the page — it is the same sample. */
+function PeekLens({ enabled, reveal, children }: { enabled: boolean; reveal: ReactNode; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const x = useMotionValue(-999);
+  const y = useMotionValue(-999);
+  const radius = useSpring(0, { stiffness: 340, damping: 30 });
+  const clip = useMotionTemplate`circle(${radius}px at ${x}px ${y}px)`;
+  const ringScale = useTransform(radius, (v) => v / LENS);
+  const tagOpacity = useTransform(radius, [LENS * 0.6, LENS], [0, 1]);
+  const [fine, setFine] = useState(false);
+  useEffect(() => {
+    setFine(window.matchMedia('(hover: hover) and (pointer: fine)').matches);
+  }, []);
+  const active = fine && enabled;
+  useEffect(() => {
+    if (!active) radius.set(0);
+  }, [active, radius]);
+
+  const track = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!active || e.pointerType !== 'mouse' || !ref.current) return;
+    const b = ref.current.getBoundingClientRect();
+    x.set(e.clientX - b.left);
+    y.set(e.clientY - b.top);
+    radius.set(LENS);
+  };
+
+  return (
+    <div
+      ref={ref}
+      className={`relative min-w-0 flex-1 ${active ? 'cursor-none' : ''}`}
+      onPointerMove={track}
+      onPointerEnter={track}
+      onPointerLeave={() => radius.set(0)}
+    >
+      {children}
+      {active && (
+        <>
+          <motion.div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-sheet" style={{ clipPath: clip }}>
+            {reveal}
+          </motion.div>
+          <motion.div aria-hidden="true" className="pointer-events-none absolute left-0 top-0" style={{ x, y }}>
+            <motion.div
+              className="rounded-full border-[1.5px] border-signal"
+              style={{ width: LENS * 2, height: LENS * 2, marginLeft: -LENS, marginTop: -LENS, scale: ringScale }}
+            />
+            <motion.span
+              style={{ opacity: tagOpacity }}
+              className="absolute left-[40px] top-[-74px] whitespace-nowrap bg-signal px-1.5 py-[2px] font-mono text-[9.5px] tracking-[0.14em] text-paper"
+            >
+              PEEK · STAYS IN THIS TAB
+            </motion.span>
+          </motion.div>
+        </>
+      )}
     </div>
   );
 }
@@ -198,11 +350,15 @@ function HeroSheet({ p }: { p: MotionValue<number> }) {
 
   const [redacted, setRedacted] = useState(0);
   const [phase, setPhase] = useState<'detect' | 'redact' | 'done'>('detect');
+  const last = useRef({ count: 0, phase: 'detect' as 'detect' | 'redact' | 'done' });
   useMotionValueEvent(p, 'change', (v) => {
     let count = 0;
     for (let i = 0; i < n; i++) if (v >= windowFor(i).to) count++;
-    setRedacted(count);
-    setPhase(v < HERO_START ? 'detect' : count < n ? 'redact' : 'done');
+    const next = v < HERO_START ? 'detect' : count < n ? 'redact' : 'done';
+    /* Only re-render when the visible counter actually changes. */
+    if (count !== last.current.count) setRedacted(count);
+    if (next !== last.current.phase) setPhase(next);
+    last.current = { count, phase: next };
   });
 
   const stampOpacity = useTransform(p, [0.8, 0.86], [0, 1]);
@@ -226,6 +382,24 @@ function HeroSheet({ p }: { p: MotionValue<number> }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entities, p]);
 
+  /* The same record without bars, shown inside the cursor lens. */
+  const peekNodes = useMemo(() => {
+    const out: ReactNode[] = [];
+    let cursor = 0;
+    entities.forEach((e, i) => {
+      if (e.start > cursor) out.push(<span key={`t-${i}`}>{HERO_RECORD.slice(cursor, e.start)}</span>);
+      const meta = CATEGORY_META[e.category];
+      out.push(
+        <span key={e.id} style={{ background: meta.softBg, boxShadow: `inset 0 -1.5px 0 ${meta.color}` }}>
+          {HERO_RECORD.slice(e.start, e.end)}
+        </span>,
+      );
+      cursor = e.end;
+    });
+    if (cursor < HERO_RECORD.length) out.push(<span key="tail">{HERO_RECORD.slice(cursor)}</span>);
+    return out;
+  }, [entities]);
+
   const lineCount = HERO_RECORD.split('\n').length;
   const status =
     phase === 'detect' ? `${n} fields detected` : phase === 'redact' ? `Redacting ${redacted} of ${n}` : `${n} of ${n} redacted`;
@@ -245,9 +419,9 @@ function HeroSheet({ p }: { p: MotionValue<number> }) {
               <div key={i}>{i + 1}</div>
             ))}
           </div>
-          <pre className="min-w-0 flex-1 overflow-hidden whitespace-pre pr-4 font-mono text-[10.5px] leading-[24px] text-ink sm:leading-[26px] min-[400px]:text-[11.5px] sm:text-[13px]">
-            {nodes}
-          </pre>
+          <PeekLens enabled={redacted > 0} reveal={<pre className={SHEET_PRE}>{peekNodes}</pre>}>
+            <pre className={SHEET_PRE}>{nodes}</pre>
+          </PeekLens>
         </div>
         <div className="flex items-center justify-between gap-3 border-t border-rule px-4 py-2.5 font-mono text-[11px]">
           <span className="text-ink-2" aria-live="polite">
@@ -343,11 +517,24 @@ function Ticker() {
   const { scrollYProgress } = useScroll({ target: ref, offset: ['start end', 'end start'] });
   const x1 = useTransform(scrollYProgress, [0, 1], ['0%', '-22%']);
   const x2 = useTransform(scrollYProgress, [0, 1], ['-22%', '0%']);
+  const x3 = useTransform(scrollYProgress, [0, 1], ['-4%', '-38%']);
+  /* Scroll speed bends the type: it leans while moving, then settles. */
+  const { scrollY } = useScroll();
+  const visible = useInView(ref, { margin: '20% 0px 20% 0px' });
+  const rawSpeed = useVelocity(scrollY);
+  /* Off screen the input is held at zero, so the springs come to rest and stop writing styles. */
+  const gated = useTransform(rawSpeed, (v) => (visible ? v : 0));
+  const speed = useSpring(gated, { stiffness: 380, damping: 50, restDelta: 0.5 });
+  const skew = useTransform(speed, [-2600, 0, 2600], [12, 0, -12], { clamp: true });
+  const skewBack = useTransform(skew, (v) => -v * 0.7);
   const rows = [0, 1, 2];
 
   return (
     <section ref={ref} aria-hidden="true" className="overflow-hidden border-y border-rule bg-paper py-10 sm:py-14">
-      <motion.div style={{ x: x1 }} className="flex w-max items-center gap-8 whitespace-nowrap sm:gap-10">
+      <motion.div
+        style={{ x: x1, skewX: skew }}
+        className="flex w-max items-center gap-8 whitespace-nowrap will-change-transform sm:gap-10"
+      >
         {rows.flatMap((r) =>
           CATEGORIES.map((c) => (
             <span key={`${r}-${c}`} className="flex items-center gap-8 sm:gap-10">
@@ -359,7 +546,7 @@ function Ticker() {
           )),
         )}
       </motion.div>
-      <motion.div style={{ x: x2 }} className="mt-6 flex w-max items-center gap-10 whitespace-nowrap sm:mt-8">
+      <motion.div style={{ x: x2, skewX: skewBack }} className="mt-6 flex w-max items-center gap-10 whitespace-nowrap will-change-transform sm:mt-8">
         {rows.flatMap((r) =>
           TICKER_SAMPLES.map((s) => (
             <span key={`${r}-${s.cat}`} className="flex items-center gap-3 font-mono text-[15px] text-ink-3 sm:text-[18px]">
@@ -368,6 +555,22 @@ function Ticker() {
             </span>
           )),
         )}
+      </motion.div>
+      <motion.div
+        style={{ x: x3, skewX: skew }}
+        className="mt-7 flex w-max items-center gap-6 whitespace-nowrap will-change-transform sm:mt-10"
+      >
+        {Array.from({ length: 8 }, (_, i) => (
+          <span key={i} className="flex items-center gap-6">
+            <span
+              className="text-[clamp(2.6rem,8vw,7rem)] font-semibold uppercase leading-none tracking-[-0.03em] text-transparent"
+              style={{ WebkitTextStroke: '1.5px #D9381E' }}
+            >
+              Redacted
+            </span>
+            <span className="h-3 w-3 rotate-45 bg-signal" />
+          </span>
+        ))}
       </motion.div>
     </section>
   );
@@ -400,6 +603,26 @@ function Reveal({ children, delay = 0, className = '' }: { children: ReactNode; 
   );
 }
 
+/** A redaction bar sweeps across, and the title is revealed behind it. */
+function BarReveal({ children, dark = false }: { children: ReactNode; dark?: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref, { once: true, margin: '0px 0px -15% 0px' });
+  return (
+    <div ref={ref} className="relative w-fit max-w-full overflow-hidden">
+      <motion.div initial={{ opacity: 0 }} animate={inView ? { opacity: 1 } : undefined} transition={{ delay: 0.34, duration: 0.01 }}>
+        {children}
+      </motion.div>
+      <motion.span
+        aria-hidden="true"
+        className={`absolute inset-0 ${dark ? 'bg-paper' : 'bg-ink'}`}
+        initial={{ x: '-101%' }}
+        animate={inView ? { x: ['-101%', '0%', '0%', '101%'] } : undefined}
+        transition={{ duration: 0.95, times: [0, 0.36, 0.5, 1], ease: [0.76, 0, 0.24, 1] }}
+      />
+    </div>
+  );
+}
+
 function SectionHead({ index, name, title, children, dark = false }: { index: string; name: string; title: ReactNode; children?: ReactNode; dark?: boolean }) {
   return (
     <div className="grid gap-6 lg:grid-cols-[220px_1fr] lg:gap-10">
@@ -409,11 +632,98 @@ function SectionHead({ index, name, title, children, dark = false }: { index: st
         </p>
       </Reveal>
       <Reveal delay={0.05}>
-        <h2 className="max-w-3xl text-[clamp(2rem,4.2vw,3.6rem)] font-semibold leading-[1.02] tracking-[-0.035em]">{title}</h2>
+        <BarReveal dark={dark}>
+          <h2 className="max-w-3xl pb-[0.06em] text-[clamp(2rem,4.2vw,3.6rem)] font-semibold leading-[1.02] tracking-[-0.035em]">{title}</h2>
+        </BarReveal>
         {children && (
           <p className={`mt-5 max-w-2xl text-[16px] leading-relaxed ${dark ? 'text-[#C9C5BA]' : 'text-ink-2'}`}>{children}</p>
         )}
       </Reveal>
+    </div>
+  );
+}
+
+function DetectorRow({ d, i }: { d: (typeof DETECTORS)[number]; i: number }) {
+  const ref = useRef<HTMLLIElement>(null);
+  const inView = useInView(ref, { once: true, margin: '0px 0px -12% 0px' });
+  return (
+    <motion.li
+      ref={ref}
+      initial={{ opacity: 0, y: 14 }}
+      animate={inView ? { opacity: 1, y: 0 } : undefined}
+      transition={{ duration: 0.5, delay: i * 0.04, ease: [0.22, 1, 0.36, 1] }}
+      className="group relative grid grid-cols-[44px_1fr] gap-x-4 gap-y-3 border-b border-rule py-7 transition-colors hover:bg-sheet md:grid-cols-[56px_minmax(0,1fr)_minmax(0,1.25fr)_minmax(0,1.1fr)] md:items-baseline md:gap-x-8 md:px-3"
+    >
+      <span
+        aria-hidden="true"
+        className="absolute bottom-[-1px] left-0 h-[2px] w-full origin-left scale-x-0 bg-signal transition-transform duration-500 ease-out group-hover:scale-x-100"
+      />
+      <span className="tabular font-mono text-[12px] text-muted transition-transform duration-300 group-hover:translate-x-1 group-hover:text-signal">
+        {String(i + 1).padStart(2, '0')}
+      </span>
+      <span className="flex items-center gap-3">
+        <span className="transition-transform duration-300 group-hover:rotate-45 group-hover:scale-125">
+          <Swatch category={d.cat} size={10} />
+        </span>
+        <span className="text-[24px] font-semibold tracking-[-0.02em] transition-transform duration-300 group-hover:translate-x-1 sm:text-[28px]">
+          {CATEGORY_META[d.cat].label}
+        </span>
+      </span>
+      <span className="col-start-2 text-[14.5px] leading-relaxed text-ink-2 md:col-start-auto">
+        {d.rule}
+        <span className="mt-1.5 block font-mono text-[11px] uppercase tracking-label text-muted">Check · {d.check}</span>
+      </span>
+      <span className="col-start-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[12.5px] md:col-start-auto">
+        <span className="relative text-ink-3">
+          {d.sample}
+          <span
+            aria-hidden="true"
+            className="absolute -inset-x-[3px] inset-y-[1px] origin-left scale-x-0 bg-ink transition-transform duration-300 ease-out group-hover:scale-x-100"
+          />
+        </span>
+        <ArrowRight className="h-3.5 w-3.5 text-muted transition-transform duration-300 group-hover:translate-x-1" aria-hidden="true" />
+        <span className="font-medium" style={{ color: CATEGORY_META[d.cat].color }}>
+          <Scramble text={partialMask(d.sample, d.cat)} active={inView} duration={900} />
+        </span>
+      </span>
+    </motion.li>
+  );
+}
+
+function RejectedProbe({ reason, count }: { reason: string; count: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref, { once: true, margin: '0px 0px -15% 0px' });
+  return (
+    <div ref={ref} className="grid gap-6 border border-ink bg-sheet p-6 sm:p-8 md:grid-cols-[1fr_auto] md:items-center">
+      <div>
+        <p className="label">Rejected, not redacted</p>
+        <p className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 font-mono text-[15px] sm:text-[17px]">
+          <span className="relative text-ink">
+            4111 1111 1111 1112
+            <motion.span
+              aria-hidden="true"
+              className="absolute inset-x-[-4px] top-1/2 h-[2px] origin-left bg-signal"
+              initial={{ scaleX: 0 }}
+              animate={inView ? { scaleX: 1 } : undefined}
+              transition={{ delay: 0.35, duration: 0.55, ease: [0.76, 0, 0.24, 1] }}
+            />
+          </span>
+          <ArrowRight className="h-4 w-4 text-muted" aria-hidden="true" />
+          <span className="text-signal">
+            <Scramble text={reason} active={inView} duration={1000} />
+          </span>
+        </p>
+        <p className="mt-3 max-w-xl text-[14px] leading-relaxed text-ink-3">
+          This result comes from running the engine on that number just now. Candidates that fail validation are left
+          untouched in your document and listed as rejected, so you can see what was considered.
+        </p>
+      </div>
+      <div className="md:border-l md:border-rule md:pl-8 md:text-right">
+        <span className="tabular block font-mono text-[56px] font-medium leading-none tracking-[-0.04em] text-ink md:text-[72px]">
+          <Scramble text={String(count)} active={inView} duration={1100} />
+        </span>
+        <span className="mt-2 block font-mono text-[11px] uppercase tracking-label text-muted">values redacted</span>
+      </div>
     </div>
   );
 }
@@ -432,55 +742,12 @@ function Detection() {
 
         <ol className="mt-16 border-t border-ink">
           {DETECTORS.map((d, i) => (
-            <motion.li
-              key={d.cat}
-              initial={{ opacity: 0, y: 14 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, margin: '0px 0px -8% 0px' }}
-              transition={{ duration: 0.5, delay: i * 0.04, ease: [0.22, 1, 0.36, 1] }}
-              className="group grid grid-cols-[44px_1fr] gap-x-4 gap-y-3 border-b border-rule py-7 transition-colors hover:bg-sheet md:grid-cols-[56px_minmax(0,1fr)_minmax(0,1.25fr)_minmax(0,1.1fr)] md:items-baseline md:gap-x-8 md:px-3"
-            >
-              <span className="tabular font-mono text-[12px] text-muted">{String(i + 1).padStart(2, '0')}</span>
-              <span className="flex items-center gap-3">
-                <Swatch category={d.cat} size={10} />
-                <span className="text-[24px] font-semibold tracking-[-0.02em] sm:text-[28px]">{CATEGORY_META[d.cat].label}</span>
-              </span>
-              <span className="col-start-2 text-[14.5px] leading-relaxed text-ink-2 md:col-start-auto">
-                {d.rule}
-                <span className="mt-1.5 block font-mono text-[11px] uppercase tracking-label text-muted">Check · {d.check}</span>
-              </span>
-              <span className="col-start-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[12.5px] md:col-start-auto">
-                <span className="text-ink-3">{d.sample}</span>
-                <ArrowRight className="h-3.5 w-3.5 text-muted" aria-hidden="true" />
-                <span className="font-medium" style={{ color: CATEGORY_META[d.cat].color }}>
-                  {partialMask(d.sample, d.cat)}
-                </span>
-              </span>
-            </motion.li>
+            <DetectorRow key={d.cat} d={d} i={i} />
           ))}
         </ol>
 
         <Reveal className="mt-12">
-          <div className="grid gap-6 border border-ink bg-sheet p-6 sm:p-8 md:grid-cols-[1fr_auto] md:items-center">
-            <div>
-              <p className="label">Rejected, not redacted</p>
-              <p className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 font-mono text-[15px] sm:text-[17px]">
-                <span className="text-ink line-through decoration-signal decoration-2">4111 1111 1111 1112</span>
-                <ArrowRight className="h-4 w-4 text-muted" aria-hidden="true" />
-                <span className="text-signal">{reason}</span>
-              </p>
-              <p className="mt-3 max-w-xl text-[14px] leading-relaxed text-ink-3">
-                This result comes from running the engine on that number just now. Candidates that fail validation are left
-                untouched in your document and listed as rejected, so you can see what was considered.
-              </p>
-            </div>
-            <div className="md:border-l md:border-rule md:pl-8 md:text-right">
-              <span className="tabular block font-mono text-[56px] font-medium leading-none tracking-[-0.04em] text-ink md:text-[72px]">
-                {rejectedProbe.entities.length}
-              </span>
-              <span className="mt-2 block font-mono text-[11px] uppercase tracking-label text-muted">values redacted</span>
-            </div>
-          </div>
+          <RejectedProbe reason={reason} count={rejectedProbe.entities.length} />
         </Reveal>
       </div>
     </section>
@@ -534,7 +801,16 @@ function Modes() {
   const ref = useRef<HTMLElement>(null);
   const { scrollYProgress } = useScroll({ target: ref, offset: ['start start', 'end end'] });
   const [active, setActive] = useState(0);
-  useMotionValueEvent(scrollYProgress, 'change', (v) => setActive(Math.max(0, Math.min(2, Math.floor(v * 3)))));
+  const [switches, setSwitches] = useState(0);
+  const activeRef = useRef(0);
+  useMotionValueEvent(scrollYProgress, 'change', (v) => {
+    const next = Math.max(0, Math.min(2, Math.floor(v * 3)));
+    if (next !== activeRef.current) {
+      activeRef.current = next;
+      setActive(next);
+      setSwitches((n) => n + 1);
+    }
+  });
 
   const { entities, outputs } = useMemo(() => {
     const ents = detectPII(MODES_SNIPPET, CATEGORIES).entities;
@@ -550,7 +826,7 @@ function Modes() {
     if (!el) return;
     const top = el.getBoundingClientRect().top + window.scrollY;
     const distance = el.offsetHeight - window.innerHeight;
-    window.scrollTo({ top: top + distance * (i / 3 + 0.04), behavior: 'smooth' });
+    scrollToTarget(top + distance * (i / 3 + 0.04));
   };
 
   const current = outputs[active];
@@ -562,11 +838,15 @@ function Modes() {
         <div className="mx-auto grid w-full max-w-7xl gap-6 px-5 pt-14 sm:px-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-center lg:gap-16">
           <div>
             <p className="label">02 — Modes</p>
-            <h2 className="mt-3 text-[clamp(1.75rem,3.8vw,3.3rem)] font-semibold leading-[1.02] tracking-[-0.035em] lg:mt-5">
-              One document.
-              <br />
-              Three ways to hide it.
-            </h2>
+            <div className="mt-3 lg:mt-5">
+              <BarReveal>
+                <h2 className="pb-[0.06em] text-[clamp(1.75rem,3.8vw,3.3rem)] font-semibold leading-[1.02] tracking-[-0.035em]">
+                  One document.
+                  <br />
+                  Three ways to hide it.
+                </h2>
+              </BarReveal>
+            </div>
 
             {/* Desktop: vertical list with scroll-linked rails */}
             <ol className="mt-10 hidden space-y-1 lg:block">
@@ -620,37 +900,40 @@ function Modes() {
               <span className="font-mono text-[10.5px] uppercase tracking-label text-muted">{MODES[active].title}</span>
             </div>
             <div className="relative min-h-[236px] overflow-hidden px-4 py-4 sm:min-h-[272px] sm:px-5 sm:py-5">
-              <AnimatePresence mode="wait" initial={false}>
-                <motion.pre
-                  key={mode}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -8 }}
-                  transition={{ duration: 0.25, ease: 'easeOut' }}
-                  className="whitespace-pre-wrap break-words font-mono text-[11.5px] leading-[1.9] text-ink sm:text-[13px]"
+              <pre className="whitespace-pre-wrap break-words font-mono text-[11.5px] leading-[1.9] text-ink sm:text-[13px]">
+                {current.segments.map((s, i) => {
+                  if (!s.isReplacement || !s.category) return <span key={i}>{s.text}</span>;
+                  const meta = CATEGORY_META[s.category];
+                  const full = mode === 'FULL';
+                  return (
+                    <span
+                      key={i}
+                      className="rounded-[1px] px-[3px] font-medium transition-[background-color,color,box-shadow] duration-300"
+                      style={
+                        full
+                          ? { background: '#16150F', color: '#F3F0E8', boxShadow: 'inset 0 -1.5px 0 #16150F' }
+                          : { background: meta.softBg, color: meta.color, boxShadow: `inset 0 -1.5px 0 ${meta.color}` }
+                      }
+                    >
+                      <Scramble text={s.text} animateOnMount={false} duration={520} />
+                    </span>
+                  );
+                })}
+              </pre>
+              {/* A scan line passes over the message each time the mode changes. */}
+              {switches > 0 && (
+                <motion.div
+                  key={switches}
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-x-0 top-0"
+                  initial={{ y: 0, opacity: 0 }}
+                  animate={{ y: 300, opacity: [0, 1, 1, 0] }}
+                  transition={{ duration: 0.6, ease: [0.4, 0, 0.2, 1] }}
                 >
-                  {current.segments.map((s, i) => {
-                    if (!s.isReplacement || !s.category) return <span key={i}>{s.text}</span>;
-                    const meta = CATEGORY_META[s.category];
-                    if (mode === 'FULL') {
-                      return (
-                        <span key={i} className="rounded-[1px] bg-ink px-1 text-paper">
-                          {s.text}
-                        </span>
-                      );
-                    }
-                    return (
-                      <span
-                        key={i}
-                        className="rounded-[1px] px-[2px] font-medium"
-                        style={{ background: meta.softBg, color: meta.color, boxShadow: `inset 0 -1.5px 0 ${meta.color}` }}
-                      >
-                        {s.text}
-                      </span>
-                    );
-                  })}
-                </motion.pre>
-              </AnimatePresence>
+                  <div className="h-10 w-full -translate-y-full bg-gradient-to-b from-transparent to-signal/15" />
+                  <div className="h-[2px] w-full bg-signal" />
+                </motion.div>
+              )}
             </div>
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-rule px-4 py-2.5 font-mono text-[11px] text-muted">
               <span>
@@ -681,18 +964,49 @@ const PIPELINE = [
 function PipelineNode({ p, index, total, title, desc }: { p: MotionValue<number>; index: number; total: number; title: string; desc: string }) {
   const at = index / (total - 1);
   const opacity = useTransform(p, [Math.max(0, at - 0.12), at], [0.32, 1]);
-  const fill = useTransform(p, [Math.max(0, at - 0.02), at], ['#2A2924', '#F3F0E8']);
+  /* Opacity and scale only — animating colours repaints on every frame. */
+  const fill = useTransform(p, [Math.max(0, at - 0.02), at], [0, 1]);
+  const ping = useTransform(p, [at - 0.01, at + 0.02, at + 0.09], [0, 0.9, 0]);
+  const pingScale = useTransform(p, [at - 0.01, at + 0.09], [1, 3.2]);
+  const [reached, setReached] = useState(false);
+  const reachedRef = useRef(false);
+  useMotionValueEvent(p, 'change', (v) => {
+    const next = v >= at - 0.005;
+    if (next !== reachedRef.current) {
+      reachedRef.current = next;
+      setReached(next);
+    }
+  });
   return (
     <motion.li style={{ opacity }} className="relative pl-8 lg:pl-0 lg:pt-9">
-      <motion.span
-        aria-hidden="true"
-        style={{ backgroundColor: fill }}
-        className="absolute left-0 top-1 h-3 w-3 border border-[#F3F0E8]/60 lg:top-0"
-      />
-      <span className="tabular block font-mono text-[11px] text-[#A39F94]">{String(index + 1).padStart(2, '0')}</span>
+      <span aria-hidden="true" className="absolute left-0 top-1 h-3 w-3 border border-[#F3F0E8]/60 bg-night-3 lg:top-0">
+        <motion.span className="absolute inset-0 bg-paper" style={{ opacity: fill }} />
+        <motion.span className="absolute -inset-px border border-signal" style={{ opacity: ping, scale: pingScale }} />
+      </span>
+      <span className="tabular block font-mono text-[11px] text-[#A39F94]">
+        <Scramble text={String(index + 1).padStart(2, '0')} active={reached} duration={420} />
+      </span>
       <span className="mt-1 block text-[19px] font-semibold tracking-[-0.01em] text-paper">{title}</span>
       <span className="mt-1.5 block max-w-[17rem] text-[13.5px] leading-relaxed text-[#B9B5AA]">{desc}</span>
     </motion.li>
+  );
+}
+
+/** Glowing pulse riding the leading edge of the pipeline line. */
+function Pulse({ p, vertical }: { p: MotionValue<number>; vertical?: boolean }) {
+  const pos = useTransform(p, (v) => `${Math.max(0, Math.min(1, v)) * 100}%`);
+  const glow = useTransform(p, [0, 0.02, 0.97, 1], [0, 1, 1, 0]);
+  return (
+    <motion.div className="absolute inset-0" style={vertical ? { y: pos, opacity: glow } : { x: pos, opacity: glow }}>
+      {vertical ? (
+        <span className="absolute bottom-full left-0 h-28 w-px bg-gradient-to-b from-transparent to-signal" />
+      ) : (
+        <span className="absolute right-full top-0 h-px w-48 bg-gradient-to-r from-transparent to-signal" />
+      )}
+      <span
+        className="absolute left-0 top-0 -ml-[5px] -mt-[5px] h-[11px] w-[11px] rounded-full bg-signal shadow-[0_0_0_4px_rgba(217,56,30,0.22),0_0_26px_6px_rgba(217,56,30,0.55)]"
+      />
+    </motion.div>
   );
 }
 
@@ -727,10 +1041,12 @@ function Architecture() {
           {/* Desktop: horizontal line */}
           <div aria-hidden="true" className="absolute left-0 right-0 top-[5px] hidden h-px bg-night-3 lg:block">
             <motion.div className="absolute inset-0 origin-left bg-paper" style={{ scaleX: p }} />
+            <Pulse p={p} />
           </div>
           {/* Small screens: vertical line */}
           <div aria-hidden="true" className="absolute bottom-2 left-[5px] top-2 w-px bg-night-3 lg:hidden">
             <motion.div className="absolute inset-0 origin-top bg-paper" style={{ scaleY: p }} />
+            <Pulse p={p} vertical />
           </div>
           <ol className="relative grid gap-10 lg:grid-cols-6 lg:gap-6">
             {PIPELINE.map((s, i) => (
@@ -778,7 +1094,7 @@ function Closing({ onLaunch, onLoadSample }: LandingProps) {
   const y = useTransform(scrollYProgress, [0, 1], ['38%', '0%']);
 
   return (
-    <section ref={ref} className="overflow-hidden px-5 pt-24 sm:px-8 sm:pt-32">
+    <section id="start" ref={ref} className="scroll-mt-14 overflow-hidden px-5 pt-24 sm:px-8 sm:pt-32">
       <div className="mx-auto max-w-7xl">
         <SectionHead index="04" name="Start" title="Clean the next file before it leaves your desk.">
           Open a .txt or .csv file, paste text, or start with the sample record. Findings appear as you type once the first
@@ -795,14 +1111,49 @@ function Closing({ onLaunch, onLoadSample }: LandingProps) {
           </div>
         </Reveal>
       </div>
-      <motion.div
-        aria-hidden="true"
-        style={{ y }}
-        className="mx-auto mt-20 max-w-7xl select-none text-center font-mono text-[clamp(3rem,18vw,17rem)] font-medium leading-[0.8] tracking-[0.04em] text-ink"
-      >
-        REDACTA
+      <motion.div aria-hidden="true" style={{ y }} className="mx-auto mt-20 max-w-7xl will-change-transform">
+        <StampedWordmark />
       </motion.div>
     </section>
+  );
+}
+
+const WORD = 'REDACTA';
+const TILT = [-14, 9, -6, 12, -10, 7, -12];
+
+/** Letters slam down one by one like rubber stamps; the word shudders when the last one lands, then a red bar scans across. */
+function StampedWordmark() {
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref, { once: true, margin: '0px 0px -10% 0px' });
+  const step = 0.085;
+  const landed = WORD.length * step + 0.12;
+  return (
+    <div ref={ref} className="relative select-none">
+      <motion.div
+        className="flex justify-center font-mono text-[clamp(3rem,18vw,17rem)] font-medium leading-[0.8] tracking-[0.04em] text-ink"
+        animate={inView ? { x: [0, -9, 8, -5, 3, 0] } : undefined}
+        transition={{ delay: landed, duration: 0.42, ease: 'easeOut' }}
+      >
+        {[...WORD].map((ch, i) => (
+          <motion.span
+            key={i}
+            className="inline-block"
+            initial={{ opacity: 0, scale: 1.9, y: '-28%', rotate: TILT[i] }}
+            animate={inView ? { opacity: 1, scale: 1, y: '0%', rotate: 0 } : undefined}
+            transition={{ delay: i * step, type: 'spring', stiffness: 560, damping: 24, mass: 0.9 }}
+          >
+            {ch}
+          </motion.span>
+        ))}
+      </motion.div>
+      <motion.div
+        className="pointer-events-none absolute inset-x-0 top-[42%] h-[0.9vw] min-h-[5px] bg-signal"
+        style={{ originX: 0 }}
+        initial={{ scaleX: 0, opacity: 1 }}
+        animate={inView ? { scaleX: [0, 1, 1], opacity: [1, 1, 0] } : undefined}
+        transition={{ delay: landed + 0.3, duration: 0.9, times: [0, 0.55, 1], ease: [0.76, 0, 0.24, 1] }}
+      />
+    </div>
   );
 }
 
