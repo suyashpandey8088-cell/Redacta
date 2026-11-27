@@ -1,8 +1,8 @@
-# VEIL — Client-side PII Redaction
+# Redacta — Client-side PII Redaction
 
 **Share the document. Not the person in it.**
 
-VEIL finds and redacts personal data — emails, phone numbers, IP addresses, PAN, Aadhaar and credit-card numbers — **entirely inside your browser tab**. Nothing is uploaded, nothing is stored, and the audit trail never contains the values themselves.
+Redacta finds and redacts personal data — emails, phone numbers, IP addresses, PAN, Aadhaar and credit-card numbers — **entirely inside your browser tab**. Nothing is uploaded, nothing is stored, and the audit trail never contains the values themselves.
 
 > No processing server · No external AI service · No localStorage, cookies or IndexedDB · No raw values in logs
 
@@ -138,6 +138,6 @@ npm test
 - Original input and sanitized output are kept separately in memory, and every mode is regenerated from the original.
 - Downloads are Blob URLs that are revoked immediately after use.
 - Audit entries contain counts, modes and timings — never the detected values.
-- VEIL makes no claims of third-party certification or external security audits.
+- Redacta makes no claims of third-party certification or external security audits.
 
 All sample data in this repository is synthetic.

@@ -27,15 +27,15 @@ export function makeEvent(event: string, status: AuditEvent['status'], detail: s
 export function exportAudit(events: AuditEvent[], format: 'txt' | 'json'): { content: string; filename: string; mime: string } {
   if (format === 'json') {
     return {
-      content: JSON.stringify({ product: 'VEIL', exportedAt: new Date().toISOString(), events }, null, 2),
-      filename: 'veil-audit-report.json',
+      content: JSON.stringify({ product: 'Redacta', exportedAt: new Date().toISOString(), events }, null, 2),
+      filename: 'redacta-audit-report.json',
       mime: 'application/json',
     };
   }
   const lines = events.map((e) => `${e.timestamp} | ${e.event} | ${e.status.toUpperCase()} | ${e.detail}`);
   return {
-    content: ['VEIL — AUDIT REPORT', `Exported: ${new Date().toISOString()}`, '', ...lines].join('\n'),
-    filename: 'veil-audit-report.txt',
+    content: ['REDACTA — AUDIT REPORT', `Exported: ${new Date().toISOString()}`, '', ...lines].join('\n'),
+    filename: 'redacta-audit-report.txt',
     mime: 'text/plain',
   };
 }

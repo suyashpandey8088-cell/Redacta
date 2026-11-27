@@ -1,5 +1,5 @@
 /**
- * VEIL — Client-side PII detection & redaction engine.
+ * Redacta — Client-side PII detection & redaction engine.
  *
  * Everything in this module runs locally in the browser.
  * No document content ever leaves the device.

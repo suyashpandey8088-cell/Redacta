@@ -172,7 +172,7 @@ function HeroCopy({
         </span>
       </h1>
       <p className="mt-7 max-w-[30rem] text-[16px] leading-relaxed text-ink-2 sm:text-[17px]">
-        VEIL finds emails, phone numbers, IP addresses, PAN, Aadhaar and card numbers in your text, then masks or
+        Redacta finds emails, phone numbers, IP addresses, PAN, Aadhaar and card numbers in your text, then masks or
         pseudonymizes them — entirely inside this browser tab. Nothing is uploaded.
       </p>
       <div className="mt-9 flex flex-wrap items-center gap-3">
@@ -719,7 +719,7 @@ function Architecture() {
     <section id="architecture" className="scroll-mt-14 bg-night px-5 py-24 text-paper sm:px-8 sm:py-32">
       <div className="mx-auto max-w-7xl">
         <SectionHead index="03" name="Architecture" title="There is no server to trust." dark>
-          VEIL is a static web page. Your document moves through six steps, and every one of them happens on your machine.
+          Redacta is a static web page. Your document moves through six steps, and every one of them happens on your machine.
           Don’t take our word for it — open your browser’s network panel while you scan.
         </SectionHead>
 
@@ -798,9 +798,9 @@ function Closing({ onLaunch, onLoadSample }: LandingProps) {
       <motion.div
         aria-hidden="true"
         style={{ y }}
-        className="mx-auto mt-20 max-w-7xl select-none text-center font-mono text-[clamp(6rem,24vw,21rem)] font-medium leading-[0.8] tracking-[0.04em] text-ink"
+        className="mx-auto mt-20 max-w-7xl select-none text-center font-mono text-[clamp(3rem,18vw,17rem)] font-medium leading-[0.8] tracking-[0.04em] text-ink"
       >
-        VEIL
+        REDACTA
       </motion.div>
     </section>
   );
@@ -810,7 +810,7 @@ function Footer() {
   return (
     <footer className="border-t border-ink bg-paper px-5 py-6 sm:px-8">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 font-mono text-[11.5px] text-muted">
-        <span>VEIL — client-side PII redaction</span>
+        <span>Redacta — client-side PII redaction</span>
         <span>Runs in your browser · Sample data is synthetic</span>
       </div>
     </footer>
