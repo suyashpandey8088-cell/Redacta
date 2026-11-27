@@ -1,40 +1,18 @@
-import { useRef, useState } from 'react';
-import {
-  ArrowLeft,
-  BarChart3,
-  ChevronLeft,
-  ChevronRight,
-  Columns2,
-  Download,
-  Eraser,
-  FileUp,
-  KeyRound,
-  LayoutDashboard,
-  Loader2,
-  Lock,
-  Play,
-  ScanLine,
-  ScrollText,
-  Shield,
-  ShieldCheck,
-} from 'lucide-react';
+import { useRef } from 'react';
+import { motion } from 'framer-motion';
+import { ArrowLeft, ClipboardPaste, Copy, Download, Eraser, FileText, FileUp, Loader2, ScanLine, Table2 } from 'lucide-react';
 import Editor from './Editor';
-import IntelligencePanel from './IntelligencePanel';
+import FindingsPanel from './FindingsPanel';
 import CompareStudio from './CompareStudio';
 import PseudonymStudio from './PseudonymStudio';
 import Analytics from './Analytics';
 import AuditCenter from './AuditCenter';
 import PrivacyCenter from './PrivacyCenter';
-import {
-  type Category,
-  type DetectionResult,
-  type Entity,
-  type RedactionMode,
-  type Segment,
-} from '../lib/pii';
+import { EmptyState, Logo, MODE_LABEL, Segmented, ViewHeader } from './ui';
+import type { Category, DetectionResult, Entity, RedactionMode, Segment } from '../lib/pii';
 import type { AuditEvent } from '../lib/audit';
 
-export type WorkspaceTab = 'overview' | 'sanitizer' | 'compare' | 'pseudonym' | 'analytics' | 'audit' | 'privacy';
+export type WorkspaceTab = 'sanitize' | 'compare' | 'aliases' | 'analysis' | 'audit' | 'privacy';
 
 interface WorkspaceProps {
   tab: WorkspaceTab;
@@ -47,9 +25,11 @@ interface WorkspaceProps {
   enabledCats: Category[];
   onToggleCategory: (c: Category) => void;
   result: DetectionResult | null;
+  stale: boolean;
   scanning: boolean;
   onScan: () => void;
   selected: Entity | null;
+  selectedIndex: number;
   onSelectEntity: (id: string) => void;
   onCloseDetail: () => void;
   onPrev: () => void;
@@ -57,12 +37,11 @@ interface WorkspaceProps {
   hasPrev: boolean;
   hasNext: boolean;
   pseudonymMap: Map<string, string>;
-  sanitized: string;
   segments: Segment[];
   onTextChange: (t: string) => void;
   onFile: (file: File) => void;
-  onLoadDemo: () => void;
-  onLoadCsvDemo: () => void;
+  onLoadSample: () => void;
+  onLoadCsvSample: () => void;
   onClearDoc: () => void;
   onExport: () => void;
   onCopySanitized: () => void;
@@ -77,410 +56,251 @@ interface WorkspaceProps {
   onPaste: () => void;
 }
 
-const NAV: { id: WorkspaceTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-  { id: 'sanitizer', label: 'Sanitizer', icon: ScanLine },
-  { id: 'compare', label: 'Compare', icon: Columns2 },
-  { id: 'pseudonym', label: 'Pseudonym Map', icon: KeyRound },
-  { id: 'analytics', label: 'Detection', icon: BarChart3 },
-  { id: 'audit', label: 'Audit Logs', icon: ScrollText },
-  { id: 'privacy', label: 'Privacy Center', icon: Lock },
-];
-
-const MODE_OPTIONS: { mode: RedactionMode; label: string; desc: string }[] = [
-  { mode: 'FULL', label: 'Full Mask', desc: 'Complete removal' },
-  { mode: 'PARTIAL', label: 'Partial Mask', desc: 'Preserve verification context' },
-  { mode: 'PSEUDONYM', label: 'Pseudonymization', desc: 'Consistent replacement identities' },
+const MODE_OPTIONS: { value: RedactionMode; label: string; title: string }[] = [
+  { value: 'FULL', label: 'Full', title: 'Replace every value with [REDACTED]' },
+  { value: 'PARTIAL', label: 'Partial', title: 'Keep a verification hint such as the last four digits' },
+  { value: 'PSEUDONYM', label: 'Alias', title: 'Replace each distinct value with a stable alias' },
 ];
 
 export default function Workspace(props: WorkspaceProps) {
-  const [collapsed, setCollapsed] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
   const {
-    tab, onTabChange, docText, fileName, fileKind, mode, onModeChange,
-    result, scanning, onScan, selected, onSelectEntity, onCloseDetail,
-    onPrev, onNext, hasPrev, hasNext, pseudonymMap, sanitized, segments,
-    onTextChange, onFile, onLoadDemo, onLoadCsvDemo, onClearDoc, onExport,
-    onCopySanitized, onCopyAlias, onResetMapping, onExportAudit, onClearSession,
-    compareLayout, onCompareLayoutChange, audit, onBackHome, onPaste,
-    enabledCats, onToggleCategory,
+    tab, onTabChange, docText, fileName, fileKind, mode, onModeChange, result, stale, scanning, onScan,
+    selected, selectedIndex, onSelectEntity, onCloseDetail, onPrev, onNext, hasPrev, hasNext, pseudonymMap,
+    segments, onTextChange, onFile, onLoadSample, onLoadCsvSample, onClearDoc, onExport, onCopySanitized,
+    onCopyAlias, onResetMapping, onExportAudit, onClearSession, compareLayout, onCompareLayoutChange, audit,
+    onBackHome, onPaste, enabledCats, onToggleCategory,
   } = props;
 
   const entities = result?.entities ?? [];
+  const aliasCount = pseudonymMap.size;
+  const openFile = () => fileInputRef.current?.click();
+  const goSanitize = () => onTabChange('sanitize');
+
+  const tabs: { id: WorkspaceTab; label: string; count?: number }[] = [
+    { id: 'sanitize', label: 'Sanitize', count: result ? entities.length : undefined },
+    { id: 'compare', label: 'Compare' },
+    { id: 'aliases', label: 'Aliases', count: result ? aliasCount : undefined },
+    { id: 'analysis', label: 'Analysis' },
+    { id: 'audit', label: 'Audit', count: audit.length || undefined },
+    { id: 'privacy', label: 'Privacy' },
+  ];
+
+  const status = !docText
+    ? 'No document'
+    : scanning
+      ? 'Scanning…'
+      : result
+        ? `${entities.length} value${entities.length === 1 ? '' : 's'} found`
+        : stale
+          ? 'Edited — scan again'
+          : 'Not scanned';
 
   return (
-    <div className="flex h-[100dvh] overflow-hidden bg-veil-bg text-veil-text">
-      {/* Left rail — desktop */}
-      <aside
-        className={`hidden shrink-0 flex-col border-r border-white/[0.07] bg-veil-secondary transition-all lg:flex ${
-          collapsed ? 'w-16' : 'w-60'
-        }`}
-      >
-        <div className="flex h-16 items-center gap-2 border-b border-white/[0.07] px-4">
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-veil-accent/15">
-            <Shield className="h-4 w-4 text-veil-accent" />
-          </span>
-          {!collapsed && <span className="text-sm font-bold tracking-[0.18em]">VEIL</span>}
+    <div className="flex h-[100dvh] flex-col bg-paper text-ink">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".txt,.csv,text/plain,text/csv"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) onFile(f);
+          e.target.value = '';
+        }}
+      />
+
+      {/* Top bar */}
+      <header className="shrink-0 border-b border-rule bg-paper">
+        <div className="flex h-14 items-center gap-3 px-4 sm:px-5">
+          <Logo onClick={onBackHome} />
+          <span className="mx-1 hidden h-5 w-px bg-rule-2 sm:block" aria-hidden="true" />
+          <div className="hidden min-w-0 items-baseline gap-3 sm:flex">
+            <span className="truncate font-mono text-[12.5px] text-ink">{fileName || 'untitled.txt'}</span>
+            <span className="shrink-0 font-mono text-[10.5px] uppercase tracking-label text-muted">{docText ? fileKind : ''}</span>
+            <span className={`shrink-0 text-[12.5px] ${stale && !result ? 'text-signal' : 'text-ink-3'}`}>{status}</span>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <span className="mr-2 hidden items-center gap-2 font-mono text-[10.5px] uppercase tracking-label text-muted xl:flex">
+              <span className="h-[6px] w-[6px] bg-signal" aria-hidden="true" /> Processing in this tab
+            </span>
+            <button onClick={onBackHome} className="btn-quiet hidden md:inline-flex">
+              <ArrowLeft className="h-3.5 w-3.5" /> Home
+            </button>
+            <button onClick={onExport} disabled={!result} className="btn-ink py-2" title={result ? undefined : 'Run a scan first'}>
+              <Download className="h-3.5 w-3.5" /> Export .{fileKind}
+            </button>
+          </div>
         </div>
-        <nav className="flex-1 space-y-1 overflow-y-auto p-3">
-          {NAV.map((item) => {
-            const active = tab === item.id;
+        <nav className="no-scrollbar flex gap-1 overflow-x-auto px-2 sm:px-3" aria-label="Workspace">
+          {tabs.map((t) => {
+            const active = tab === t.id;
             return (
               <button
-                key={item.id}
-                onClick={() => onTabChange(item.id)}
-                className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition ${
-                  active
-                    ? 'bg-veil-accent/12 font-medium text-veil-accent'
-                    : 'text-veil-muted hover:bg-white/[0.04] hover:text-veil-text'
+                key={t.id}
+                onClick={() => onTabChange(t.id)}
+                aria-current={active ? 'page' : undefined}
+                className={`relative flex shrink-0 items-center gap-2 px-3 pb-3 pt-1.5 text-[13px] font-medium transition-colors ${
+                  active ? 'text-ink' : 'text-muted hover:text-ink'
                 }`}
               >
-                <item.icon className="h-4 w-4 shrink-0" />
-                {!collapsed && item.label}
+                {t.label}
+                {t.count !== undefined && (
+                  <span className={`tabular font-mono text-[10.5px] ${active ? 'text-ink-3' : 'text-muted'}`}>{t.count}</span>
+                )}
+                {active && <motion.span layoutId="tab-underline" className="absolute inset-x-2 bottom-0 h-[2px] bg-ink" />}
               </button>
             );
           })}
         </nav>
-        <div className="space-y-1 border-t border-white/[0.07] p-3">
-          {!collapsed && (
-            <p className="flex items-center gap-2 px-3 pb-2 font-mono text-[10px] uppercase tracking-[0.16em] text-veil-accent">
-              <span className="relative flex h-1.5 w-1.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-veil-accent opacity-75" />
-                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-veil-accent" />
-              </span>
-              Local processing
-            </p>
-          )}
-          <button
-            onClick={onBackHome}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-veil-muted transition hover:bg-white/[0.04] hover:text-veil-text"
-          >
-            <ArrowLeft className="h-4 w-4 shrink-0" />
-            {!collapsed && 'Back to home'}
-          </button>
-          <button
-            onClick={() => setCollapsed(!collapsed)}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-veil-muted transition hover:bg-white/[0.04] hover:text-veil-text"
-            aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'}
-          >
-            {collapsed ? <ChevronRight className="h-4 w-4 shrink-0" /> : <ChevronLeft className="h-4 w-4 shrink-0" />}
-            {!collapsed && 'Collapse'}
-          </button>
-        </div>
-      </aside>
+      </header>
 
-      {/* Main column */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        {/* Mobile nav */}
-        <div className="flex items-center gap-2 overflow-x-auto border-b border-white/[0.07] bg-veil-secondary px-3 py-2 lg:hidden">
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-veil-accent/15">
-            <Shield className="h-4 w-4 text-veil-accent" />
-          </span>
-          {NAV.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => onTabChange(item.id)}
-              className={`flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs transition ${
-                tab === item.id ? 'bg-veil-accent/12 text-veil-accent' : 'text-veil-muted hover:text-veil-text'
-              }`}
-            >
-              <item.icon className="h-3.5 w-3.5" />
-              {item.label}
-            </button>
-          ))}
-          <button
-            onClick={onBackHome}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs text-veil-muted hover:text-veil-text"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" /> Home
-          </button>
-        </div>
-
-        {/* Content */}
-        <main className="min-h-0 flex-1 overflow-y-auto">
-          {tab === 'overview' && (
-            <div className="mx-auto max-w-5xl space-y-6 p-5 sm:p-8">
-              <div>
-                <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
-                <p className="mt-1 text-sm text-veil-muted">
-                  {docText ? `Working on ${fileName}` : 'No document loaded yet.'} All processing is local to this browser tab.
-                </p>
-              </div>
-              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                {[
-                  { label: 'Document status', value: docText ? 'Loaded' : 'Empty' },
-                  { label: 'Entities found', value: entities.length },
-                  { label: 'Redaction mode', value: mode === 'FULL' ? 'Full Mask' : mode === 'PARTIAL' ? 'Partial Mask' : 'Pseudonym' },
-                  { label: 'Session events', value: audit.length },
-                ].map((c) => (
-                  <div key={c.label} className="rounded-xl border border-white/[0.08] bg-veil-panel px-4 py-4">
-                    <p className="font-mono text-xl font-semibold text-veil-text">{c.value}</p>
-                    <p className="mt-0.5 text-[11px] text-veil-muted">{c.label}</p>
-                  </div>
-                ))}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={onLoadDemo}
-                  className="flex items-center gap-2 rounded-lg bg-veil-accent px-4 py-2.5 text-sm font-semibold text-veil-bg transition hover:brightness-110"
-                >
-                  <Play className="h-4 w-4" /> Load interactive demo
+      <main className="scroll-quiet min-h-0 flex-1 overflow-y-auto">
+        {tab === 'sanitize' && (
+          <div className="flex flex-col lg:h-full">
+            {/* Toolbar */}
+            <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-2 border-b border-rule bg-paper px-3 py-2 sm:px-4">
+              <div className="flex flex-wrap items-center gap-0.5">
+                <button onClick={openFile} className="btn-quiet">
+                  <FileUp className="h-3.5 w-3.5" /> Open
                 </button>
-                <button
-                  onClick={() => onTabChange('sanitizer')}
-                  className="flex items-center gap-2 rounded-lg border border-white/12 bg-veil-panel px-4 py-2.5 text-sm font-medium text-veil-text transition hover:border-veil-accent/40"
-                >
-                  <ScanLine className="h-4 w-4" /> Open sanitizer
+                <button onClick={onPaste} className="btn-quiet">
+                  <ClipboardPaste className="h-3.5 w-3.5" /> Paste
                 </button>
-                <button
-                  onClick={() => onTabChange('privacy')}
-                  className="flex items-center gap-2 rounded-lg border border-white/12 bg-veil-panel px-4 py-2.5 text-sm font-medium text-veil-text transition hover:border-veil-accent/40"
-                >
-                  <ShieldCheck className="h-4 w-4" /> Verify privacy
+                <button onClick={onLoadSample} className="btn-quiet">
+                  <FileText className="h-3.5 w-3.5" /> Sample record
+                </button>
+                <button onClick={onLoadCsvSample} className="btn-quiet">
+                  <Table2 className="h-3.5 w-3.5" /> Sample CSV
+                </button>
+                <button onClick={onClearDoc} disabled={!docText} className="btn-quiet hover:text-signal">
+                  <Eraser className="h-3.5 w-3.5" /> Clear
                 </button>
               </div>
-              <div className="rounded-xl border border-white/[0.08] bg-veil-panel p-5">
-                <h3 className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-veil-muted">
-                  Recent session events
-                </h3>
-                {audit.length === 0 ? (
-                  <p className="mt-3 text-sm text-veil-muted">No events yet — load a document to begin.</p>
-                ) : (
-                  <ul className="mt-3 space-y-2">
-                    {[...audit].reverse().slice(0, 5).map((e) => (
-                      <li key={e.id} className="flex items-center justify-between gap-3 text-sm">
-                        <span className="text-veil-text">{e.event}</span>
-                        <span className="font-mono text-[11px] text-veil-muted">
-                          {new Date(e.timestamp).toLocaleTimeString()}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                <Segmented label="Redaction mode" value={mode} options={MODE_OPTIONS} onChange={onModeChange} />
+                <button onClick={onScan} disabled={scanning || docText.trim().length === 0} className="btn-ink py-2">
+                  {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ScanLine className="h-3.5 w-3.5" />}
+                  {scanning ? 'Scanning' : result ? 'Rescan' : 'Scan'}
+                  <kbd className="ml-1 hidden rounded-[2px] border border-paper/25 px-1 font-mono text-[10px] font-normal text-paper/70 lg:inline">
+                    Ctrl+Enter
+                  </kbd>
+                </button>
               </div>
             </div>
-          )}
 
-          {tab === 'sanitizer' && (
-            <div className="flex min-h-full flex-col gap-4 p-4 sm:p-5 lg:h-full lg:min-h-0">
-              {/* Header */}
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h1 className="text-lg font-semibold tracking-tight">Document Sanitizer</h1>
-                  <p className="flex items-center gap-2 text-xs text-veil-muted">
-                    <span className="relative flex h-1.5 w-1.5">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-veil-accent opacity-75" />
-                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-veil-accent" />
-                    </span>
-                    Local processing environment active
-                    {fileName && (
-                      <span className="font-mono text-[11px] text-veil-muted/80">
-                        · {fileName} · {fileKind.toUpperCase()}
-                      </span>
-                    )}
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".txt,.csv,text/plain,text/csv"
-                    className="hidden"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) onFile(f);
-                      e.target.value = '';
-                    }}
-                  />
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-veil-panel px-3 py-2 text-xs font-medium text-veil-text transition hover:border-veil-accent/40"
-                  >
-                    <FileUp className="h-3.5 w-3.5" /> Upload
-                  </button>
-                  <button
-                    onClick={onPaste}
-                    className="rounded-lg border border-white/10 bg-veil-panel px-3 py-2 text-xs font-medium text-veil-text transition hover:border-veil-accent/40"
-                  >
-                    Paste
-                  </button>
-                  <button
-                    onClick={onLoadDemo}
-                    className="flex items-center gap-1.5 rounded-lg border border-veil-accent/40 bg-veil-accent/10 px-3 py-2 text-xs font-semibold text-veil-accent transition hover:bg-veil-accent/20"
-                  >
-                    <Play className="h-3.5 w-3.5" /> Demo
-                  </button>
-                  <button
-                    onClick={onLoadCsvDemo}
-                    className="rounded-lg border border-white/10 bg-veil-panel px-3 py-2 text-xs font-medium text-veil-text transition hover:border-veil-accent/40"
-                  >
-                    CSV demo
-                  </button>
-                  <button
-                    onClick={onClearDoc}
-                    className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-veil-panel px-3 py-2 text-xs font-medium text-veil-text transition hover:border-red-400/40 hover:text-red-300"
-                  >
-                    <Eraser className="h-3.5 w-3.5" /> Clear
-                  </button>
-                </div>
-              </div>
-
-              {/* Detection toolbar */}
-              <div className="flex flex-wrap items-center gap-3 rounded-xl border border-white/[0.08] bg-veil-panel p-3">
-                <button
-                  onClick={onScan}
-                  disabled={scanning || docText.trim().length === 0}
-                  className="flex items-center gap-2 rounded-lg bg-veil-accent px-4 py-2.5 text-sm font-semibold text-veil-bg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanLine className="h-4 w-4" />}
-                  {scanning ? 'Scanning…' : 'Scan Document'}
-                </button>
-
-                <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Redaction mode">
-                  {MODE_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.mode}
-                      role="radio"
-                      aria-checked={mode === opt.mode}
-                      onClick={() => onModeChange(opt.mode)}
-                      className={`rounded-lg border px-3 py-2 text-left transition ${
-                        mode === opt.mode
-                          ? 'border-veil-accent/60 bg-veil-accent/12'
-                          : 'border-white/10 hover:border-white/25'
-                      }`}
-                    >
-                      <span className={`block text-xs font-semibold ${mode === opt.mode ? 'text-veil-accent' : 'text-veil-text'}`}>
-                        {opt.label}
-                      </span>
-                      <span className="block text-[10px] text-veil-muted">{opt.desc}</span>
-                    </button>
-                  ))}
-                </div>
-
-                <button
-                  onClick={onExport}
-                  disabled={!result}
-                  className="ml-auto flex items-center gap-2 rounded-lg border border-white/10 bg-veil-panel px-4 py-2.5 text-sm font-medium text-veil-text transition hover:border-veil-accent/40 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <Download className="h-4 w-4" /> Export Sanitized File
-                </button>
-              </div>
-
-              {/* Editor + intelligence */}
-              <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
-                <div className="flex min-h-[420px] min-w-0 flex-1 flex-col lg:min-h-0">
-                  <Editor
-                    text={docText}
-                    onChange={onTextChange}
-                    entities={entities}
-                    selected={selected}
-                    onCloseDetail={onCloseDetail}
-                    onPrev={onPrev}
-                    onNext={onNext}
-                    hasPrev={hasPrev}
-                    hasNext={hasNext}
-                    pseudonymMap={pseudonymMap}
-                    mode={mode}
-                    onFileDrop={onFile}
-                  />
-                </div>
-                <aside className="flex min-h-0 w-full shrink-0 flex-col rounded-xl border border-white/[0.08] bg-veil-secondary lg:w-80">
-                  <IntelligencePanel
-                    result={result}
-                    enabledCats={enabledCats}
-                    onToggleCategory={onToggleCategory}
-                    selectedId={selected?.id ?? null}
-                    onSelectEntity={onSelectEntity}
-                  />
-                </aside>
-              </div>
-            </div>
-          )}
-
-          {tab === 'compare' && (
-            <div className="flex min-h-full flex-col p-4 sm:p-5 lg:h-full lg:min-h-0">
-              {result ? (
-                <CompareStudio
-                  original={docText}
-                  segments={segments}
+            <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_340px]">
+              <div className="flex h-[68vh] min-h-[420px] flex-col p-3 sm:p-4 lg:h-auto lg:min-h-0">
+                <Editor
+                  text={docText}
+                  fileName={fileName}
+                  onChange={onTextChange}
                   entities={entities}
+                  selected={selected}
+                  selectedIndex={selectedIndex}
+                  onSelectEntity={onSelectEntity}
+                  onCloseDetail={onCloseDetail}
+                  onPrev={onPrev}
+                  onNext={onNext}
+                  hasPrev={hasPrev}
+                  hasNext={hasNext}
+                  pseudonymMap={pseudonymMap}
                   mode={mode}
-                  layout={compareLayout}
-                  onLayoutChange={onCompareLayoutChange}
-                  onCopy={onCopySanitized}
-                  onDownload={onExport}
+                  scanning={scanning}
+                  onFileDrop={onFile}
+                  onOpenFile={openFile}
+                  onPaste={onPaste}
+                  onLoadSample={onLoadSample}
                 />
-              ) : (
-                <EmptyState
-                  title="Nothing to compare yet"
-                  desc="Load a document and run a scan — the before/after studio will show exactly what changed."
-                  actionLabel="Open sanitizer"
-                  onAction={() => onTabChange('sanitizer')}
+              </div>
+              <aside className="scroll-quiet min-h-0 border-t border-rule bg-paper lg:overflow-y-auto lg:border-l lg:border-t-0">
+                <FindingsPanel
+                  result={result}
+                  docText={docText}
+                  enabledCats={enabledCats}
+                  onToggleCategory={onToggleCategory}
+                  selectedId={selected?.id ?? null}
+                  onSelectEntity={onSelectEntity}
                 />
-              )}
+              </aside>
             </div>
-          )}
+          </div>
+        )}
 
-          {tab === 'pseudonym' && (
-            <div className="flex min-h-full flex-col p-4 sm:p-5 lg:h-full lg:min-h-0">
-              <PseudonymStudio
-                entities={entities}
-                pseudonymMap={pseudonymMap}
-                onCopyAlias={onCopyAlias}
-                onReset={onResetMapping}
+        {tab === 'compare' && (
+          <div className="flex flex-col gap-5 p-4 sm:p-6 lg:h-full lg:p-8">
+            <ViewHeader
+              index="02 — Compare"
+              title="Before and after"
+              desc="The original and the sanitized output, scrolled together. Switch modes here to see each version."
+              actions={
+                result ? (
+                  <>
+                    <Segmented label="Redaction mode" size="sm" value={mode} options={MODE_OPTIONS} onChange={onModeChange} />
+                    <Segmented
+                      label="Layout"
+                      size="sm"
+                      value={compareLayout}
+                      options={[
+                        { value: 'side', label: 'Side by side' },
+                        { value: 'stacked', label: 'Stacked' },
+                      ]}
+                      onChange={onCompareLayoutChange}
+                    />
+                    <button onClick={onCopySanitized} className="btn-line py-2">
+                      <Copy className="h-3.5 w-3.5" /> Copy
+                    </button>
+                    <button onClick={onExport} className="btn-ink py-2">
+                      <Download className="h-3.5 w-3.5" /> Download
+                    </button>
+                  </>
+                ) : undefined
+              }
+            />
+            {result ? (
+              <CompareStudio original={docText} segments={segments} entities={entities} mode={mode} layout={compareLayout} />
+            ) : (
+              <EmptyState
+                title="Nothing to compare yet"
+                desc={`Scan a document first. You will see the original and its ${MODE_LABEL[mode].toLowerCase()} version line by line.`}
+                actionLabel="Go to Sanitize"
+                onAction={goSanitize}
               />
-            </div>
-          )}
+            )}
+          </div>
+        )}
 
-          {tab === 'analytics' && (
-            <div className="p-4 sm:p-5">
-              <Analytics result={result} docText={docText} entities={entities} pseudonymMap={pseudonymMap} />
-            </div>
-          )}
+        {tab === 'aliases' && (
+          <div className="mx-auto max-w-6xl p-4 sm:p-6 lg:p-8">
+            <PseudonymStudio
+              entities={entities}
+              pseudonymMap={pseudonymMap}
+              hasResult={!!result}
+              onCopyAlias={onCopyAlias}
+              onReset={onResetMapping}
+              onGoSanitize={goSanitize}
+            />
+          </div>
+        )}
 
-          {tab === 'audit' && (
-            <div className="flex min-h-full flex-col p-4 sm:p-5 lg:h-full lg:min-h-0">
-              <AuditCenter events={audit} onExport={onExportAudit} onClearSession={onClearSession} />
-            </div>
-          )}
+        {tab === 'analysis' && (
+          <div className="mx-auto max-w-6xl p-4 sm:p-6 lg:p-8">
+            <Analytics result={result} docText={docText} entities={entities} pseudonymMap={pseudonymMap} mode={mode} onGoSanitize={goSanitize} />
+          </div>
+        )}
 
-          {tab === 'privacy' && (
-            <div className="p-4 sm:p-5">
-              <PrivacyCenter events={audit} />
-            </div>
-          )}
-        </main>
-      </div>
+        {tab === 'audit' && (
+          <div className="mx-auto max-w-6xl p-4 sm:p-6 lg:p-8">
+            <AuditCenter events={audit} onExport={onExportAudit} onClearSession={onClearSession} onGoSanitize={goSanitize} />
+          </div>
+        )}
 
-    </div>
-  );
-}
-
-function EmptyState({
-  title,
-  desc,
-  actionLabel,
-  onAction,
-}: {
-  title: string;
-  desc: string;
-  actionLabel: string;
-  onAction: () => void;
-}) {
-  return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-20 text-center">
-      <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-veil-panel">
-        <Columns2 className="h-5 w-5 text-veil-accent" />
-      </div>
-      <p className="text-sm font-medium text-veil-text">{title}</p>
-      <p className="max-w-xs text-xs text-veil-muted">{desc}</p>
-      <button
-        onClick={onAction}
-        className="mt-1 rounded-lg bg-veil-accent px-4 py-2 text-xs font-semibold text-veil-bg transition hover:brightness-110"
-      >
-        {actionLabel}
-      </button>
+        {tab === 'privacy' && (
+          <div className="mx-auto max-w-6xl p-4 sm:p-6 lg:p-8">
+            <PrivacyCenter events={audit} docLength={docText.length} aliasCount={aliasCount} />
+          </div>
+        )}
+      </main>
     </div>
   );
 }

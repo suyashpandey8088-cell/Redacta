@@ -1,122 +1,118 @@
-import {
-  ArrowDown,
-  Database,
-  Download,
-  FileSearch,
-  Lock,
-  MemoryStick,
-  ScanSearch,
-  ShieldCheck,
-  Wand2,
-} from 'lucide-react';
+import { Check, Minus } from 'lucide-react';
 import type { AuditEvent } from '../lib/audit';
-
-const STEPS = [
-  { icon: FileSearch, title: 'Document', desc: 'Your file or pasted text enters the page.' },
-  { icon: MemoryStick, title: 'Local Browser Memory', desc: 'Content lives only in this tab’s memory.' },
-  { icon: ScanSearch, title: 'PII Detection', desc: 'Six categories scanned on-device.' },
-  { icon: ShieldCheck, title: 'Validation', desc: 'Luhn, format and range checks reject false positives.' },
-  { icon: Wand2, title: 'Redaction', desc: 'Mask, partial-mask or pseudonymize in place.' },
-  { icon: Download, title: 'Local Export', desc: 'Sanitized file downloads directly to your device.' },
-];
-
-const INDICATORS = [
-  'No document uploads to a processing server',
-  'No external AI processing',
-  'No persistent storage of raw documents',
-  'No sensitive values in audit logs',
-  'Local file export only',
-];
+import { ViewHeader } from './ui';
 
 interface PrivacyCenterProps {
   events: AuditEvent[];
+  docLength: number;
+  aliasCount: number;
 }
 
-export default function PrivacyCenter({ events }: PrivacyCenterProps) {
+const STEPS = [
+  { title: 'Your file', desc: 'A .txt or .csv file, or pasted text, is read by this page with the File API.' },
+  { title: 'Tab memory', desc: 'The text is held in this tab’s JavaScript memory and nowhere else.' },
+  { title: 'Detect', desc: 'Six detectors scan the text on your device.' },
+  { title: 'Validate', desc: 'Luhn, range and format checks remove false positives.' },
+  { title: 'Redact', desc: 'Each mode is regenerated from the untouched original.' },
+  { title: 'Download', desc: 'A Blob is saved to your device; its object URL is revoked immediately.' },
+];
+
+const NEVER = [
+  'Uploading your document to a processing server',
+  'Sending content to an external AI service',
+  'Writing documents to localStorage, cookies or IndexedDB',
+  'Recording raw values in the audit log',
+];
+
+export default function PrivacyCenter({ events, docLength, aliasCount }: PrivacyCenterProps) {
   const scans = events.filter((e) => e.event === 'Detection completed').length;
   const exportsCount = events.filter((e) => e.event === 'Export generated').length;
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto">
-      <div>
-        <h2 className="text-xl font-semibold tracking-tight text-veil-text">Privacy center</h2>
-        <p className="mt-0.5 text-xs text-veil-muted">
-          Verification of the local-only architecture — inspect it, don’t take our word for it.
-        </p>
-      </div>
+  const session = [
+    { label: 'Document in memory', value: docLength > 0 ? `${docLength.toLocaleString()} chars` : 'None' },
+    { label: 'Alias map entries', value: String(aliasCount) },
+    { label: 'Scans run', value: String(scans) },
+    { label: 'Exports created', value: String(exportsCount) },
+    { label: 'Audit entries', value: String(events.length) },
+    { label: 'Browser storage used', value: 'None' },
+  ];
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Architecture flow */}
-        <div className="rounded-xl border border-white/[0.08] bg-veil-panel p-5">
-          <h3 className="flex items-center gap-2 font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-veil-muted">
-            <Database className="h-3.5 w-3.5 text-veil-accent" /> Processing architecture
-          </h3>
-          <ol className="mt-4 space-y-0">
-            {STEPS.map((step, i) => (
-              <li key={step.title}>
-                <div className="flex items-center gap-3 rounded-lg border border-white/[0.07] bg-veil-secondary px-3 py-2.5">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-veil-accent/12 text-veil-accent">
-                    <step.icon className="h-4 w-4" />
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block text-xs font-semibold text-veil-text">{step.title}</span>
-                    <span className="block text-[11px] text-veil-muted">{step.desc}</span>
-                  </span>
+  return (
+    <div className="flex flex-col gap-10">
+      <ViewHeader
+        index="06 — Privacy"
+        title="How your data moves"
+        desc="VEIL is a static page. Below is the full path a document takes, and the state this session currently holds."
+      />
+
+      <div className="grid gap-10 lg:grid-cols-[1.15fr_1fr]">
+        <section>
+          <h2 className="label">Processing path</h2>
+          <ol className="relative mt-5">
+            <span aria-hidden="true" className="absolute bottom-3 left-[5px] top-3 w-px bg-rule-2" />
+            {STEPS.map((s, i) => (
+              <li key={s.title} className="relative flex gap-5 pb-6 last:pb-0">
+                <span aria-hidden="true" className="relative mt-[5px] h-[11px] w-[11px] shrink-0 border border-ink bg-sheet" />
+                <div>
+                  <p className="flex items-baseline gap-2">
+                    <span className="tabular font-mono text-[11px] text-muted">{String(i + 1).padStart(2, '0')}</span>
+                    <span className="text-[15px] font-semibold text-ink">{s.title}</span>
+                  </p>
+                  <p className="mt-1 text-[13px] leading-relaxed text-ink-3">{s.desc}</p>
                 </div>
-                {i < STEPS.length - 1 && (
-                  <div className="flex justify-center py-1">
-                    <ArrowDown className="h-3.5 w-3.5 text-veil-accent/60" />
-                  </div>
-                )}
               </li>
             ))}
           </ol>
-          <p className="mt-4 rounded-lg border border-veil-accent/25 bg-veil-accent/10 px-3 py-2.5 text-xs text-veil-accent">
-            There is no external document-processing server in this flow. Nothing to breach, nothing to subpoena.
-          </p>
-        </div>
+        </section>
 
-        {/* Indicators + session stats */}
-        <div className="flex flex-col gap-4">
-          <div className="rounded-xl border border-white/[0.08] bg-veil-panel p-5">
-            <h3 className="flex items-center gap-2 font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-veil-muted">
-              <Lock className="h-3.5 w-3.5 text-veil-accent" /> Security indicators
-            </h3>
+        <div className="flex flex-col gap-8">
+          <section>
+            <h2 className="label">This session</h2>
+            <dl className="mt-4 border-t border-ink">
+              {session.map((row) => (
+                <div key={row.label} className="flex items-baseline justify-between gap-4 border-b border-rule py-3">
+                  <dt className="text-[13px] text-ink-2">{row.label}</dt>
+                  <dd className="tabular font-mono text-[13px] text-ink">{row.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+
+          <section>
+            <h2 className="label">Never happens</h2>
             <ul className="mt-4 space-y-2.5">
-              {INDICATORS.map((item) => (
-                <li key={item} className="flex items-start gap-2.5 text-sm text-veil-text">
-                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-veil-accent" />
-                  {item}
+              {NEVER.map((t) => (
+                <li key={t} className="flex items-start gap-3 text-[13px] leading-relaxed text-ink-2">
+                  <Minus className="mt-[3px] h-3.5 w-3.5 shrink-0 text-signal" aria-hidden="true" />
+                  {t}
                 </li>
               ))}
             </ul>
-          </div>
-
-          <div className="rounded-xl border border-white/[0.08] bg-veil-panel p-5">
-            <h3 className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-veil-muted">
-              This session
-            </h3>
-            <div className="mt-3 grid grid-cols-3 gap-2">
-              <div className="rounded-lg bg-veil-secondary px-3 py-2.5 text-center">
-                <p className="font-mono text-lg font-semibold text-veil-text">{scans}</p>
-                <p className="text-[10px] text-veil-muted">Scans run</p>
-              </div>
-              <div className="rounded-lg bg-veil-secondary px-3 py-2.5 text-center">
-                <p className="font-mono text-lg font-semibold text-veil-text">{exportsCount}</p>
-                <p className="text-[10px] text-veil-muted">Exports</p>
-              </div>
-              <div className="rounded-lg bg-veil-secondary px-3 py-2.5 text-center">
-                <p className="font-mono text-lg font-semibold text-veil-text">{events.length}</p>
-                <p className="text-[10px] text-veil-muted">Audit events</p>
-              </div>
-            </div>
-            <p className="mt-3 text-xs leading-relaxed text-veil-muted">
-              Network note: VEIL loads no document data over the network. The only requests this page makes are for
-              its own interface assets. VEIL makes no third-party certification or external security-audit claims.
-            </p>
-          </div>
+          </section>
         </div>
       </div>
+
+      <section className="border border-ink bg-sheet p-6 sm:p-8">
+        <h2 className="label">Check it yourself</h2>
+        <ol className="mt-4 grid gap-5 sm:grid-cols-3">
+          {[
+            'Open your browser’s developer tools and switch to the Network panel.',
+            'Scan a document, change modes and export the result.',
+            'No request carries your text. Scans and exports run without touching the network.',
+          ].map((t, i) => (
+            <li key={t} className="flex gap-3">
+              <span className="tabular font-mono text-[12px] text-muted">{String(i + 1).padStart(2, '0')}</span>
+              <span className="flex-1 text-[13.5px] leading-relaxed text-ink-2">
+                {t}
+                {i === 2 && <Check className="ml-1.5 inline h-3.5 w-3.5 text-ink" aria-hidden="true" />}
+              </span>
+            </li>
+          ))}
+        </ol>
+        <p className="mt-6 border-t border-rule pt-4 text-[12px] leading-relaxed text-muted">
+          VEIL makes no claims of third-party certification or external security audits.
+        </p>
+      </section>
     </div>
   );
 }

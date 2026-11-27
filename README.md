@@ -1,151 +1,143 @@
-# VEIL — Privacy Intelligence Platform
+# VEIL — Client-side PII Redaction
 
-**"Privacy isn't a feature. It's the architecture."**
+**Share the document. Not the person in it.**
 
-VEIL is a privacy-first PII detection and sanitization platform that runs **entirely in your browser**. Identify, protect, and anonymize sensitive data — emails, phone numbers, IP addresses, PAN, Aadhaar, and credit cards — without your documents ever leaving your device.
+VEIL finds and redacts personal data — emails, phone numbers, IP addresses, PAN, Aadhaar and credit-card numbers — **entirely inside your browser tab**. Nothing is uploaded, nothing is stored, and the audit trail never contains the values themselves.
 
-> **100% client-side processing.** No uploads. No processing server. No persistent storage of raw documents. No sensitive values in audit logs.
+> No processing server · No external AI service · No localStorage, cookies or IndexedDB · No raw values in logs
 
 ---
 
-## Features
+## Highlights
 
-### Detection Engine
+### Detection engine (`src/lib/pii.ts`)
 
-- **6 PII categories**: Email, Phone (Indian + international), IPv4/IPv6, PAN, Aadhaar, Credit Card
-- **Luhn validation** for credit cards — invalid candidates are rejected, never redacted
-- IPv4 octet range checks, IPv6 group validation, and format validation for every category
-- **Overlap resolution** — e.g. a 16-digit card run never surfaces as Aadhaar; adjacent values (Aadhaar + card) are segmented correctly
-- Ordinary numbers (order IDs, years, amounts) are ignored
-- Category enable/disable filters with live re-scan
+| Type | Rule | Validation |
+|---|---|---|
+| Email | Local part + domain, TLD of two or more letters | Structure |
+| Phone | Indian 10-digit mobiles, international `+CC` numbers (10–15 digits) | Length & prefix |
+| IP address | IPv4 (octets 0–255), full and compressed IPv6 | Range |
+| PAN | `AAAAA9999A` layout | Format |
+| Aadhaar | 12 digits in 4-4-4 groups, never inside a longer card run | Format & context |
+| Credit card | 13–19 digits | **Luhn checksum** |
 
-### Redaction Modes (regenerated from the original input)
+- Candidates that match a pattern but fail validation are **rejected**: they are left unchanged and listed with the reason.
+- Overlap resolution keeps one entity per span; adjacent values (an Aadhaar next to a card) are segmented correctly.
+- Ordinary numbers such as order IDs, years and amounts are ignored.
 
-| Mode | Behavior |
+### Redaction modes (always regenerated from the original text)
+
+| Mode | Output |
 |---|---|
-| **Full Mask** | `[REDACTED]` — complete removal |
-| **Partial Mask** | Category-specific masking that preserves verification context (`a***@example.com`, `**** **** **** 1111`) — never exposes a complete identifier |
-| **Pseudonymization** | Stable aliases per normalized value (`USER_01`, `PHONE_01`, `PAN_01`, `IP_01`, `CARD_01`, `AADHAAR_01`). Repeated values — including format variants like `+91 98765 43210` vs `9876543210` — share one alias |
+| **Full mask** | `[REDACTED]` |
+| **Partial mask** | Keeps a verification hint only — `a***@example.com`, `••••••3210`, `**** **** **** 1111` |
+| **Pseudonymize** | Stable aliases per distinct value — `USER_01`, `PHONE_01`, `CARD_01`. Format variants such as `+91 98765 43210` and `9876543210` share one alias, including across CSV rows. |
+
+---
+
+## The interface
+
+The design follows a "declassified document" idea: warm paper, ink-black redaction bars, one red signal colour, hairline rules and the IBM Plex type family (self-hosted, so the page makes no font requests to third parties).
+
+### Landing page — scroll-driven
+
+- **Pinned hero:** a customer record is scanned by the real engine, and as you scroll, ink bars redact each value one by one. A live counter tracks progress, a *Sanitized* stamp lands at the end, and the word "person" in the headline is redacted too.
+- **Scroll ticker:** two rows of type move in opposite directions as you scroll — category names, then their masked forms.
+- **Detection index:** the six detectors as a numbered editorial table, plus a live engine result showing a card number rejected by the Luhn check.
+- **Pinned modes section:** scrolling steps through Full → Partial → Pseudonymize on the same message, with scroll-linked progress rails. Click a mode to jump to it.
+- **Architecture band:** a six-step pipeline whose connecting line draws itself as you scroll, followed by *What happens* / *What never happens*.
+- **Reading progress bar** in the navigation and a closing wordmark that rises with scroll.
 
 ### Workspace
 
-- **Document editor**: monospaced overlay editor with line numbers, per-category PII highlighting, char/word/line counts, Tab support, drag-and-drop, paste, TXT/CSV upload, sample loaders, clear
-- **Detection Intelligence panel**: total/validated/rejected/sanitized-char stats, category distribution, per-category toggles, recent findings (masked previews only)
-- **Finding details**: floating panel with entity type, validation result, line/column position, redaction status, assigned alias, prev/next navigation
-- **Compare Studio**: synchronized before/after panels with emerald replacement markers, side-by-side & stacked layouts, copy/download
-- **Pseudonym Studio**: alias table with category filter, search, copy, reset, occurrence counts
-- **Analytics**: real scan metrics only — detection breakdown, validation-rate donut, processing duration, per-mode output lengths
-- **Audit Center**: chronological, PII-free event timeline with TXT/JSON report export and session clearing
-- **Privacy Center**: local-only architecture flow, security indicators, live session stats
+| Tab | What it does |
+|---|---|
+| **Sanitize** | Overlay editor with line numbers and per-type highlights. Open, paste, drag and drop, sample record, sample CSV, clear. Click a highlighted value (or a row in the findings panel) to inspect it; the inspector shows position, check result, replacement and alias, with previous/next navigation. After the first scan, findings update **live as you type**. Scan with the button or **Ctrl/Cmd + Enter**. |
+| **Compare** | Original and sanitized text side by side or stacked, scrolled together, with mode switching, copy and download. |
+| **Aliases** | Every distinct value with its alias, masked source, use count and lines. Search, filter by type, copy, rebuild. |
+| **Analysis** | Values found, rejected, pass rate, characters hidden, share of document, scan time, by-type bars, validation ring, a line map of where values appear, and output length per mode. |
+| **Audit** | Newest-first session log (counts, modes and timings only) with `.txt` / `.json` export and a clear-session action. |
+| **Privacy** | The processing path, live session state (document size, alias count, scans, exports, storage used) and steps to verify it yourself in DevTools. |
 
-### Landing Experience
-
-- Editorial hero with animated privacy visualization (shield, floating masked fragments, flow lines)
-- Scroll storytelling: *The Problem* → *The Transformation* (interactive mode switcher powered by the real engine) → *Privacy by Design*
-
-### Interactive Demo
-
-**Load interactive demo** injects a synthetic document containing all six categories, repeated entities, an invalid Luhn card (rejected), and ordinary numbers — then auto-scans it.
+Exports are named after the source file (`customer-record-sample-sanitized.txt`). CSV exports are sanitized cell by cell, so quoting and structure are preserved.
 
 ---
 
-## Privacy Architecture
-
-```
-User Document
-    ↓
-Local Browser Memory
-    ↓
-PII Detection (on-device)
-    ↓
-Local Validation (Luhn, ranges, formats)
-    ↓
-Redaction Engine
-    ↓
-Sanitized Export (Blob download)
-```
-
-There is **no external document-processing server** in this flow. The only network requests the page makes are for its own interface assets.
-
----
-
-## Tech Stack
+## Tech stack
 
 | Layer | Technology |
 |---|---|
-| Framework | React 18 + TypeScript |
+| Framework | React 18 + TypeScript (strict) |
 | Build | Vite 5 |
 | Styling | Tailwind CSS 3 |
-| Motion | Framer Motion |
+| Motion | Framer Motion (`useScroll`, `useTransform`, `whileInView`) |
+| Type | IBM Plex Sans + IBM Plex Mono via `@fontsource` |
 | Icons | Lucide React |
 | Tests | Vitest |
 
 ---
 
-## Getting Started
+## Getting started
 
-**Prerequisites:** Node.js 18+
+Requires Node.js 18 or newer.
 
 ```bash
 npm install
-npm run dev        # start dev server → http://localhost:5173
+npm run dev        # http://localhost:5173
 ```
-
-### Scripts
 
 | Command | Description |
 |---|---|
-| `npm run dev` | Start the Vite dev server |
-| `npm run build` | Type-check (`tsc`) + production build to `dist/` |
-| `npm run preview` | Preview the production build |
-| `npm test` | Run the Vitest suite (15 tests) |
+| `npm run dev` | Start the dev server |
+| `npm run build` | Type-check with `tsc`, then build to `dist/` |
+| `npm run preview` | Serve the production build |
+| `npm test` | Run the Vitest suite |
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
 src/
 ├── lib/
-│   ├── pii.ts          # Detection, validation, redaction, CSV engine
-│   ├── pii.test.ts     # Engine test suite (15 tests)
-│   ├── sample.ts       # Synthetic demo documents (TXT + CSV)
-│   └── audit.ts        # PII-free audit trail + report export
+│   ├── pii.ts            # Detection, validation, redaction, pseudonyms, CSV
+│   ├── pii.test.ts       # Engine tests
+│   ├── sample.ts         # Synthetic sample record, sample CSV, landing snippets
+│   └── audit.ts          # Metadata-only audit events and report export
 ├── components/
-│   ├── Landing.tsx         # Marketing/landing experience
-│   ├── HeroVisual.tsx      # Animated privacy visualization
-│   ├── Workspace.tsx       # Three-zone app shell + toolbar
-│   ├── Editor.tsx          # Overlay editor with PII highlighting
-│   ├── IntelligencePanel.tsx
+│   ├── Landing.tsx       # Scroll-driven landing page
+│   ├── Workspace.tsx     # Top bar, tabs, Sanitize toolbar and view routing
+│   ├── Editor.tsx        # Highlight overlay editor + inspector
+│   ├── FindingsPanel.tsx # Summary, type filters, values, rejected list
 │   ├── CompareStudio.tsx
 │   ├── PseudonymStudio.tsx
 │   ├── Analytics.tsx
 │   ├── AuditCenter.tsx
-│   └── PrivacyCenter.tsx
-├── App.tsx             # State orchestration, audit logging, exports
+│   ├── PrivacyCenter.tsx
+│   └── ui.tsx            # Logo, view header, segmented control, empty state
+├── App.tsx               # State, scanning, live re-scan, exports, audit, toasts
 ├── main.tsx
 └── index.css
 ```
 
 ---
 
-## Testing
+## Tests
 
 ```bash
 npm test
 ```
 
-The suite covers Luhn validation, all six detection categories, invalid-candidate rejection, overlap resolution (card vs Aadhaar), partial-mask safety, pseudonym consistency, mode switching from original input, disabled-category isolation, CSV quoting round-trips, and the full demo document (9 entities, 1 rejection).
+17 tests cover the Luhn check, all six detectors, rejection of invalid candidates, IPv4 range checks, ignoring ordinary numbers, disabled types, card-versus-Aadhaar overlap, partial-mask safety, pseudonym consistency, regenerating modes from the original, CSV quoting round-trips, CSV alias consistency across rows, reuse of document-level aliases in CSV export, and the full sample record (9 values found, 1 rejected).
 
 ---
 
-## Security Notes
+## Privacy notes
 
-- All document processing is client-side; nothing is transmitted or persisted
-- Original input and transformed output are kept separate in memory; downloads use Blob URLs that are revoked after use
-- Audit events record only non-sensitive metadata (counts, modes, durations) — never raw PII
-- VEIL makes no third-party certification or external security-audit claims
+- All processing happens in the browser; documents are never transmitted or persisted.
+- Original input and sanitized output are kept separately in memory, and every mode is regenerated from the original.
+- Downloads are Blob URLs that are revoked immediately after use.
+- Audit entries contain counts, modes and timings — never the detected values.
+- VEIL makes no claims of third-party certification or external security audits.
 
-## License
-
-Hackathon project — built for demonstration purposes. All demo data is synthetic.
+All sample data in this repository is synthetic.
